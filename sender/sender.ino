@@ -9,7 +9,6 @@ SX1262 radio = new Module(8, 14, 12, 13);
 void setup() {
   Serial.begin(115200);
   delay(1000);
-
   Serial.println("Sender booting");
 
   int state = radio.begin(LORA_FREQ);
