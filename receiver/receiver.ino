@@ -19,6 +19,16 @@ CRGB* leds = nullptr;
 uint8_t tubeCount;
 uint8_t TransientID;
 int totalLEDs;
+TaskHandle_t animationTaskHandle = nullptr;
+volatile bool stopAnimation = false;
+volatile bool animationExited = false;
+
+struct FlashConfig{
+  int count;
+  int timeOn;
+  int timeOff;
+  CRGB color;
+};
 
 void setup() {
   Serial.begin(115200);
@@ -26,6 +36,7 @@ void setup() {
   Serial.println("Receiver booting");
 
   tubeCount = loadTubeCount();
+  //TODO Actually init this, hardcoded for now
   tubeCount = 4;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
   
@@ -64,31 +75,157 @@ void loop() {
 
     Serial.print("Received: ");
     Serial.println(incoming);
-
-    if (incoming == 1) setColor(CRGB::Red);
-    else if (incoming == 2) setColor(CRGB::Green);
-    else if (incoming == 3) setColor(CRGB::Blue);
-    else if (incoming == 0) setColor(CRGB::Black);
+    processCommand(incoming);
   }
   // else ignore (no packet / timeout)
+
 }
 
+void processCommand(byte command){
+
+  //so here's the idea. we have 1 task which handles listening for commands. 
+  //It loops through repeatedly, simply waiting to hear any new command. 
+  //If it gets a command, it stops any current animations
+  //then it starts the new one
+  
+  Serial.println("stopping anim");
+  stopCurrentAnimation();
+
+  //process the command. Right now this is really simple, since we only have a few animations
+  if (command == 1) setColor(CRGB::Red);
+  else if (command == 2) setColor(CRGB::Green);
+  else if (command == 3) setColor(CRGB::Blue);
+  else if (command == 0) setColor(CRGB::Black);
+  else if (command == 4) {
+    FlashConfig* flashConf = new FlashConfig{
+      .count = -1,
+      .timeOn = 500,
+      .timeOff = 500,
+      .color = CRGB::Red
+    };
+    Serial.println("Starting flash task");
+    startAnimation(&flashAnimationTask, flashConf);
+  }
+  else if (command == 5) {
+    FlashConfig* flashConf = new FlashConfig{
+      .count = -1,
+      .timeOn = 500,
+      .timeOff = 500,
+      .color = CRGB::Green
+    };
+    Serial.println("Starting flash task");
+    startAnimation(&flashAnimationTask, flashConf);
+  }
+  else if (command == 6) {
+    FlashConfig* flashConf = new FlashConfig{
+      .count = -1,
+      .timeOn = 500,
+      .timeOff = 500,
+      .color = CRGB::Blue
+    };
+    Serial.println("Starting flash task");
+    startAnimation(&flashAnimationTask, flashConf);
+  }
+}
+
+void startAnimation(void (*animFn)(void*), void* config){
+  //make sure no animations are currently running
+  stopCurrentAnimation();
+
+  //reset these so your new animation won't exit on its own
+  stopAnimation = false;
+  animationExited = false;
+
+  Serial.println("Anim configured, previous anim stopped, flags reset. Starting new anim task.");
+  xTaskCreatePinnedToCore(
+    animFn,
+    "Animation",
+    4096,
+    config,
+    1,
+    &animationTaskHandle,
+    1
+  );
+}
+
+void stopCurrentAnimation(){
+  if (animationTaskHandle != nullptr){
+    
+    Serial.println("Attempting graceful stop.");
+    //stop whatever animation is currently running
+    stopAnimation = true;
+
+    //give it a little time to stop
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    if(!animationExited){
+      Serial.println("Task failed to stop. Forcing stop.");
+      //if it doesn't stop, force kill. 
+      vTaskDelete(animationTaskHandle);
+    }
+
+    animationTaskHandle = nullptr;
+    animationExited = false;
+    FastLED.clear(true);
+  }
+}
+
+bool sleepInterruptible(uint32_t totalMs){
+  //loop until you get force interrupted by someone else altering stopAnimation
+  uint32_t start = millis();
+
+  Serial.println("Waiting");
+  while (millis() - start < totalMs){
+    if (stopAnimation) return true;
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  return false;
+}
+
+
+void flashAnimationTask(void* parameter){
+
+  FlashConfig* config = (FlashConfig*)parameter;
+
+  int count = config->count;
+  int timeOn = config->timeOn;
+  int timeOff = config->timeOff;
+  CRGB color = config->color;
+  delete config;
+
+  Serial.println("Config loaded");
+  for(int i = 0; (i < count || count < 0) && !stopAnimation; i++){
+    Serial.println("Flash off");
+    setColor(CRGB::Black);
+    if(sleepInterruptible(timeOff)) break;
+
+    Serial.println("Flash on");
+    setColor(color);
+    if(sleepInterruptible(timeOn)) break;
+  }
+
+  Serial.println("Exited loop");
+  //set this in case something tries to kill mid loop (via sleepInterruptible)
+  animationExited = true;
+  vTaskDelete(nullptr);
+}
 
 void initializeReceiver(){
-//so now the init flow is this
-//boot. if you have a uid/tube count, load them.
-//if you don't load defaults. 
-//when you get a command to init, start blinking and transmitting your uid. 
-idAssignmentAnimation();
-//between transmissions, listen for a response containing your uid and a transid
-uint8_t uid = 0;
-saveTransientID(uid);
+  //so now the init flow is this
+  //boot. if you have a uid/tube count, load them.
+  //if you don't load defaults. 
+  //when you get a command to init, start blinking and transmitting your uid. 
+  idAssignmentAnimation();
+  //between transmissions, listen for a response containing your uid and a transid
+  uint8_t uid = 0;
+  saveTransientID(uid);
 
-//now you can just listen like normal. 
-//the next step will likely be a tube count transmission signal, but this will be completely initialized via the sender.
-//what it'll do is assign you a blinking color, once the end user ids you by that color, it'll ask for tube count, they input, then it transmits.
-//but basically all that is purely sender side logic.
+  //now you can just listen like normal. 
+  //the next step will likely be a tube count transmission signal, but this will be completely initialized via the sender.
+  //what it'll do is assign you a blinking color, once the end user ids you by that color, it'll ask for tube count, they input, then it transmits.
+  //but basically all that is purely sender side logic.
 }
+
 uint64_t getUID(){
   return ESP.getEfuseMac();
 }

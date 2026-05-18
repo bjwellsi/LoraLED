@@ -29,6 +29,9 @@ void loop() {
     if (c == 'r') sendCommand(1); // red
     else if (c == 'g') sendCommand(2); // green
     else if (c == 'b') sendCommand(3); // blue
+    else if (c == 'R') sendCommand(4); // flash red
+    else if (c == 'G') sendCommand(5); // flash green
+    else if (c == 'B') sendCommand(6); // flash blue
     else if (c == 'o') sendCommand(0); // off
     else {
       Serial.print("Unknown command: ");
