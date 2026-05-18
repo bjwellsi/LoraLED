@@ -33,6 +33,7 @@ void loop() {
     else if (c == 'G') sendCommand(5); // flash green
     else if (c == 'B') sendCommand(6); // flash blue
     else if (c == 'o') sendCommand(0); // off
+    else if (c == 'e') sendCommand(8); // error
     else {
       Serial.print("Unknown command: ");
       Serial.println(c);

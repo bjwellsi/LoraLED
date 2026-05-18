@@ -57,11 +57,17 @@ void setup() {
   if (state != RADIOLIB_ERR_NONE) {
     Serial.print("Radio init failed, code: ");
     Serial.println(state);
-    errAnimation();
+    startAnimation(&errAnimationTask, nullptr);
     while (true);
   }
 
-  bootAnimation(); // startup OK indicator
+  startAnimation(&bootAnimationTask, nullptr);
+
+  // //await the boot animation for now
+  // while(!animationExited){
+  //   vTaskDelay(pdMS_TO_TICKS(500));
+  //   Serial.println("Awaiting boot sequence");
+  // }
   Serial.println("Receiver ready");
 }
 
@@ -69,7 +75,6 @@ void loop() {
   byte payload[1];
 
   int state = radio.receive(payload, 1);
-
   if (state == RADIOLIB_ERR_NONE) {
     byte incoming = payload[0];
 
@@ -87,15 +92,15 @@ void processCommand(byte command){
   //It loops through repeatedly, simply waiting to hear any new command. 
   //If it gets a command, it stops any current animations
   //then it starts the new one
-  
-  Serial.println("stopping anim");
-  stopCurrentAnimation();
 
   //process the command. Right now this is really simple, since we only have a few animations
-  if (command == 1) setColor(CRGB::Red);
-  else if (command == 2) setColor(CRGB::Green);
-  else if (command == 3) setColor(CRGB::Blue);
-  else if (command == 0) setColor(CRGB::Black);
+  if (command == 0) setColorAnimationAtomic(CRGB::Black);
+  else if (command == 8) {
+    startAnimation(&errAnimationTask, nullptr);
+  }
+  else if (command == 1) setColorAnimationAtomic(CRGB::Red);
+  else if (command == 2) setColorAnimationAtomic(CRGB::Green);
+  else if (command == 3) setColorAnimationAtomic(CRGB::Blue);
   else if (command == 4) {
     FlashConfig* flashConf = new FlashConfig{
       .count = -1,
@@ -174,7 +179,6 @@ bool sleepInterruptible(uint32_t totalMs){
   //loop until you get force interrupted by someone else altering stopAnimation
   uint32_t start = millis();
 
-  Serial.println("Waiting");
   while (millis() - start < totalMs){
     if (stopAnimation) return true;
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -182,43 +186,22 @@ bool sleepInterruptible(uint32_t totalMs){
   return false;
 }
 
-
-void flashAnimationTask(void* parameter){
-
-  FlashConfig* config = (FlashConfig*)parameter;
-
-  int count = config->count;
-  int timeOn = config->timeOn;
-  int timeOff = config->timeOff;
-  CRGB color = config->color;
-  delete config;
-
-  Serial.println("Config loaded");
-  for(int i = 0; (i < count || count < 0) && !stopAnimation; i++){
-    Serial.println("Flash off");
-    setColor(CRGB::Black);
-    if(sleepInterruptible(timeOff)) break;
-
-    Serial.println("Flash on");
-    setColor(color);
-    if(sleepInterruptible(timeOn)) break;
-  }
-
-  Serial.println("Exited loop");
-  //set this in case something tries to kill mid loop (via sleepInterruptible)
+void cleanupAnimationTask(){
   animationExited = true;
   vTaskDelete(nullptr);
 }
+
 
 void initializeReceiver(){
   //so now the init flow is this
   //boot. if you have a uid/tube count, load them.
   //if you don't load defaults. 
   //when you get a command to init, start blinking and transmitting your uid. 
-  idAssignmentAnimation();
+  startAnimation(&idAssignmentAnimationTask, nullptr);
   //between transmissions, listen for a response containing your uid and a transid
   uint8_t uid = 0;
   saveTransientID(uid);
+  setColorAnimationAtomic(CRGB::Black);
 
   //now you can just listen like normal. 
   //the next step will likely be a tube count transmission signal, but this will be completely initialized via the sender.
@@ -261,60 +244,76 @@ uint8_t loadTubeCount(){
   return count;
 }
 
-void errAnimation(){
-  flashAnimation(-1, 200, 200, CRGB::Red);
+void errAnimationTask(void* parameter){
+  flashAnimationBuilder(-1, 200, 200, CRGB::Red);
+  cleanupAnimationTask();
 }
 
-void bootAnimation(){
-  unsigned long lastTime = 0;
-
-  chargeAnimation(CRGB::Green, 30);
-  flashAnimation(1, 250, 400, CRGB::Green);
-}
-
-void idAssignmentAnimation(){
-  flashAnimation(-1, 100, 1000, CRGB::Blue);
-}
-
-void chargeAnimation(CRGB color, int speedMs){
-  unsigned long lastTime = 0;
-  int delayMs = 35;
-  int i = 0;
-  int colorIndex = 0;
-  while(i < totalLEDs){
-    if(millis() - lastTime > speedMs){
-      leds[i] = color;
-      FastLED.show();
-
-      i++;
-      lastTime = millis();
-    }
+void bootAnimationTask(void* parameter){
+  if(!chargeAnimationBuilder(CRGB::Green, 30)){
+    cleanupAnimationTask();
   }
+  flashAnimationBuilder(1, 250, 400, CRGB::Green);
+  cleanupAnimationTask();
 }
 
-void flashAnimation(int count, int timeOff, int timeOn, CRGB color){
-  unsigned long lastTime = 0;
-  int i = 0;
+void idAssignmentAnimationTask(void* parameter){
+  flashAnimationBuilder(-1, 100, 1000, CRGB::Blue);
+  cleanupAnimationTask();
+}
+
+
+void flashAnimationTask(void* parameter){
+
+  FlashConfig* config = (FlashConfig*)parameter;
+
+  int count = config->count;
+  int timeOn = config->timeOn;
+  int timeOff = config->timeOff;
+  CRGB color = config->color;
+  delete config;
+
+  Serial.println("Config loaded");
+  flashAnimationBuilder(count, timeOff, timeOn, color);
+
+  Serial.println("Exited loop");
+  cleanupAnimationTask();
+}
+
+bool chargeAnimationBuilder(CRGB color, int speedMs){
+
+  for(int i = 0; i < totalLEDs; i++){
+    if(stopAnimation) return false;
+
+    leds[i] = color;
+    FastLED.show();
+    if(sleepInterruptible(speedMs)) return false;
+  }
+  return true;
+}
+
+bool flashAnimationBuilder(int count, int timeOff, int timeOn, CRGB color){
+  for(int i = 0; i < count || count < 0; i++){
+    //so the calling op can know to kill itself if exit was forced
+    if(stopAnimation) return false;
+
+    Serial.println("Flash off");
+    setColor(CRGB::Black);
+    if(sleepInterruptible(timeOff)) return false;
+
+    Serial.println("Flash on");
+    setColor(color);
+    if(sleepInterruptible(timeOn)) return false;
+  }
+  Serial.println("Exited loop, flash off");
   setColor(CRGB::Black);
-  lastTime = millis();
-  bool colorOn = false;
-  while(true){
-    if(i >= count && count >= 0){
-      //count < 0 means flash forever
-      break;
-    }
-    if(colorOn && millis() - lastTime > timeOn){
-      setColor(CRGB::Black);
-      colorOn = false;
-      i++;
-      lastTime = millis();
-    }
-    else if(!colorOn && millis() - lastTime > timeOff) {
-      setColor(color);
-      colorOn = true;
-      lastTime = millis();
-    }
-  }
+  //to tell the calling op that you weren't interrupted, you stopped on your own
+  return true;
+}
+
+void setColorAnimationAtomic(CRGB color) {
+  stopCurrentAnimation();
+  setColor(color);
 }
 
 void setColor(CRGB color) {
