@@ -2,6 +2,7 @@
 #include <RadioLib.h>
 #include <Preferences.h>
 #include <Arduino.h>
+#include "LedDriver.h"
 
 // SX1262 pins for Heltec V3
 // Module(NSS, DIO1, RESET, BUSY)
@@ -298,25 +299,25 @@ bool flashAnimationBuilder(int count, int timeOff, int timeOn, CRGB color){
     if(stopAnimation) return false;
 
     Serial.println("Flash off");
-    setColor(CRGB::Black);
+    LedDriver::setColor(CRGB::Black);
     if(sleepInterruptible(timeOff)) return false;
 
     Serial.println("Flash on");
-    setColor(color);
+    LedDriver::setColor(color);
     if(sleepInterruptible(timeOn)) return false;
   }
   Serial.println("Exited loop, flash off");
-  setColor(CRGB::Black);
+  LedDriver::setColor(CRGB::Black);
   //to tell the calling op that you weren't interrupted, you stopped on your own
   return true;
 }
 
 void setColorAnimationAtomic(CRGB color) {
   stopCurrentAnimation();
-  setColor(color);
+  LedDriver::setColor(color);
 }
 
-void setColor(CRGB color) {
-  fill_solid(leds, totalLEDs, color);
-  FastLED.show();
-}
+// void setColor(CRGB color) {
+//   fill_solid(leds, totalLEDs, color);
+//   FastLED.show();
+// }
