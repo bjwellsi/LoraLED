@@ -1,4 +1,5 @@
 #include <RadioLib.h>
+#include "ComDef.h"
 
 // Heltec WiFi LoRa 32 V3 SX1262 pins:
 // Module(NSS, DIO1, RESET, BUSY)
@@ -24,35 +25,82 @@ void setup() {
 
 void loop() {
   if (Serial.available() > 0) {
-    char c = Serial.read();
+    String line = Serial.readStringUntil('\n');
+    line.trim();
 
-    if (c == 'r') sendCommand(1); // red
-    else if (c == 'g') sendCommand(2); // green
-    else if (c == 'b') sendCommand(3); // blue
-    else if (c == 'R') sendCommand(4); // flash red
-    else if (c == 'G') sendCommand(5); // flash green
-    else if (c == 'B') sendCommand(6); // flash blue
-    else if (c == 'o') sendCommand(0); // off
-    else if (c == 'e') sendCommand(8); // error
-    else {
-      Serial.print("Unknown command: ");
-      Serial.println(c);
-      return;
-    }
+    handleCliCommand(line);
 
     Serial.print("Handled command: ");
-    Serial.println(c);
+    Serial.println(line);
   }
 }
 
-void sendCommand(byte cmd) {
-  byte payload[1] = { cmd };
+void handleCliCommand(String line){
+  ComDef::Packet packet{}; 
 
-  int state = radio.transmit(payload, 1);
+  if (line.startsWith("off ")){
+    int targetId;
+
+    int parsed = sscanf(line.c_str(), "off %d", &targetId);
+    
+    if (parsed != 1) {
+      Serial.println("Bad off command");
+      return;
+    }
+
+    packet.targetId = (uint8_t)targetId;
+    packet.command = (uint8_t)0;
+  }
+  else if (line.startsWith("solid ")){
+    int targetId, r, g, b;
+
+    int parsed = sscanf(line.c_str(), "solid %d, %d, %d, %d", &targetId, &r, &g, &b);
+    
+    if (parsed != 4) {
+      Serial.println("Bad color command");
+      return;
+    }
+
+    packet.targetId = (uint8_t)targetId;
+    packet.command = (uint8_t)1;
+    packet.p1 = (uint8_t)r;
+    packet.p2 = (uint8_t)g;
+    packet.p3 = (uint8_t)b;
+  }
+  else if (line.startsWith("flash ")){
+    int targetId, r, g, b, count, timeOff, timeOn;
+
+    int parsed = sscanf(line.c_str(), "flash %d, %d, %d, %d, %d, %d, %d", &targetId, &r, &g, &b, &count, &timeOff, &timeOn);
+
+    if (parsed != 7) {
+      Serial.println("Bad flash command");
+      return;
+    }
+
+    packet.targetId = (uint8_t)targetId;
+    packet.command = (uint8_t)2;
+    packet.p1 = (uint8_t)r;
+    packet.p2 = (uint8_t)g;
+    packet.p3 = (uint8_t)b;
+    packet.p4 = (uint8_t)count;
+    packet.p5 = (uint8_t)(((uint16_t)timeOff >> 8) & 0xFF);
+    packet.p6 = (uint8_t)(((uint16_t)timeOff) & 0xFF);
+    packet.p7 = (uint8_t)(((uint16_t)timeOn >> 8) & 0xFF);
+    packet.p8 = (uint8_t)(((uint16_t)timeOn) & 0xFF);
+  }
+  else {
+    Serial.println("Unknown command");
+    return;
+  }
+
+  sendCommand(packet);
+}
+
+void sendCommand(ComDef::Packet packet) {
+  int state = radio.transmit((uint8_t*)&packet, sizeof(packet));
 
   if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("Sent: ");
-    Serial.println(cmd);
+    Serial.print("Sent packet");
   } else {
     Serial.print("Send failed, code: ");
     Serial.println(state);

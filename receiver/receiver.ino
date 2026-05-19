@@ -6,6 +6,7 @@
 #include "AtomicOps.h"
 #include "AnimationTasks.h"
 #include "TaskHandling.h"
+#include "ComDef.h"
 
 // SX1262 pins for Heltec V3
 // Module(NSS, DIO1, RESET, BUSY)
@@ -42,6 +43,7 @@ void setup() {
   tubeCount = loadTubeCount();
   //TODO Actually init this, hardcoded for now
   tubeCount = 4;
+  TransientID = 1;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
   
   Serial.print("Loaded ");
@@ -67,134 +69,55 @@ void setup() {
 
   TaskHandling::startAnimation(&AnimationTasks::bootAnimationTask, nullptr);
 
-  // //await the boot animation for now
-  // while(!animationExited){
-  //   vTaskDelay(pdMS_TO_TICKS(500));
-  //   Serial.println("Awaiting boot sequence");
-  // }
   Serial.println("Receiver ready");
 }
 
 void loop() {
-  byte payload[1];
+  ComDef::Packet packet;
 
-  int state = radio.receive(payload, 1);
+  int state = radio.receive((uint8_t*)&packet, sizeof(packet));
   if (state == RADIOLIB_ERR_NONE) {
-    byte incoming = payload[0];
-
-    Serial.print("Received: ");
-    Serial.println(incoming);
-    processCommand(incoming);
+    Serial.print("Received command");
+    processCommand(packet);
   }
   // else ignore (no packet / timeout)
-
 }
 
-void processCommand(byte command){
+void processCommand(ComDef::Packet packet){
 
-  //so here's the idea. we have 1 task which handles listening for commands. 
-  //It loops through repeatedly, simply waiting to hear any new command. 
-  //If it gets a command, it stops any current animations
-  //then it starts the new one
+  //parse out the bytes
+  if(packet.targetId != TransientID)
+  {
+    //command isn't for this reciever
+    return;
+  }
 
-  //process the command. Right now this is really simple, since we only have a few animations
-  if (command == 0) AtomicOps::setColorAnimation(CRGB::Black);
-  else if (command == 8) {
-    TaskHandling::startAnimation(&AnimationTasks::errAnimationTask, nullptr);
+  //command def for now
+  //0 - off
+  //1 - static
+    //color is defined in p1,2,3
+  //2 - flash 
+    //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
+  if (packet.command == 0) AtomicOps::setColorAnimation(CRGB::Black);
+  else if (packet.command == 1) {
+    CRGB color = {packet.p1, packet.p2, packet.p3};
+    AtomicOps::setColorAnimation(color);
   }
-  else if (command == 1) AtomicOps::setColorAnimation(CRGB::Red);
-  else if (command == 2) AtomicOps::setColorAnimation(CRGB::Green);
-  else if (command == 3) AtomicOps::setColorAnimation(CRGB::Blue);
-  else if (command == 4) {
+  else if (packet.command == 2){
+    CRGB color = {packet.p1, packet.p2, packet.p3};
+    uint8_t count = packet.p4; 
+    uint16_t offTime = ((uint16_t)packet.p5 << 8) | packet.p6;
+    uint16_t onTime = ((uint16_t)packet.p7 << 8) | packet.p8;
     AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
-      .count = -1,
-      .timeOn = 500,
-      .timeOff = 500,
-      .color = CRGB::Red
-    };
-    Serial.println("Starting flash task");
-    TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
-  }
-  else if (command == 5) {
-    AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
-      .count = -1,
-      .timeOn = 500,
-      .timeOff = 500,
-      .color = CRGB::Green
-    };
-    Serial.println("Starting flash task");
-    TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
-  }
-  else if (command == 6) {
-    AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
-      .count = -1,
-      .timeOn = 500,
-      .timeOff = 500,
-      .color = CRGB::Blue
+      .count = int(count),
+      .timeOn = int(onTime),
+      .timeOff = int(offTime),
+      .color = color
     };
     Serial.println("Starting flash task");
     TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
   }
 }
-
-// void startAnimation(void (*animFn)(void*), void* config){
-//   //make sure no animations are currently running
-//   stopCurrentAnimation();
-
-//   //reset these so your new animation won't exit on its own
-//   stopAnimation = false;
-//   animationExited = false;
-
-//   Serial.println("Anim configured, previous anim stopped, flags reset. Starting new anim task.");
-//   xTaskCreatePinnedToCore(
-//     animFn,
-//     "Animation",
-//     4096,
-//     config,
-//     1,
-//     &animationTaskHandle,
-//     1
-//   );
-// }
-
-// void stopCurrentAnimation(){
-//   if (animationTaskHandle != nullptr){
-    
-//     Serial.println("Attempting graceful stop.");
-//     //stop whatever animation is currently running
-//     stopAnimation = true;
-
-//     //give it a little time to stop
-//     vTaskDelay(pdMS_TO_TICKS(20));
-
-//     if(!animationExited){
-//       Serial.println("Task failed to stop. Forcing stop.");
-//       //if it doesn't stop, force kill. 
-//       vTaskDelete(animationTaskHandle);
-//     }
-
-//     animationTaskHandle = nullptr;
-//     animationExited = false;
-//     FastLED.clear(true);
-//   }
-// }
-
-// bool sleepInterruptible(uint32_t totalMs){
-//   //loop until you get force interrupted by someone else altering stopAnimation
-//   uint32_t start = millis();
-
-//   while (millis() - start < totalMs){
-//     if (stopAnimation) return true;
-//     vTaskDelay(pdMS_TO_TICKS(5));
-//   }
-//   return false;
-// }
-
-// void cleanupAnimationTask(){
-//   animationExited = true;
-//   vTaskDelete(nullptr);
-// }
-
 
 void initializeReceiver(){
   //so now the init flow is this
@@ -203,7 +126,7 @@ void initializeReceiver(){
   //when you get a command to init, start blinking and transmitting your uid. 
   TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
   //between transmissions, listen for a response containing your uid and a transid
-  uint8_t uid = 0;
+  uint8_t uid = 1;
   saveTransientID(uid);
   AtomicOps::setColorAnimation(CRGB::Black);
 
@@ -247,75 +170,3 @@ uint8_t loadTubeCount(){
   prefs.end();
   return count;
 }
-
-// void errAnimationTask(void* parameter){
-//   flashAnimationBuilder(-1, 200, 200, CRGB::Red);
-//   cleanupAnimationTask();
-// }
-
-// void bootAnimationTask(void* parameter){
-//   if(!chargeAnimationBuilder(CRGB::Green, 30)){
-//     cleanupAnimationTask();
-//   }
-//   flashAnimationBuilder(1, 250, 400, CRGB::Green);
-//   cleanupAnimationTask();
-// }
-
-// void idAssignmentAnimationTask(void* parameter){
-//   flashAnimationBuilder(-1, 100, 1000, CRGB::Blue);
-//   cleanupAnimationTask();
-// }
-
-
-// void flashAnimationTask(void* parameter){
-
-//   FlashConfig* config = (FlashConfig*)parameter;
-
-//   int count = config->count;
-//   int timeOn = config->timeOn;
-//   int timeOff = config->timeOff;
-//   CRGB color = config->color;
-//   delete config;
-
-//   Serial.println("Config loaded");
-//   flashAnimationBuilder(count, timeOff, timeOn, color);
-
-//   Serial.println("Exited loop");
-//   cleanupAnimationTask();
-// }
-
-// bool chargeAnimationBuilder(CRGB color, int speedMs){
-
-//   for(int i = 0; i < totalLEDs; i++){
-//     if(stopAnimation) return false;
-
-//     leds[i] = color;
-//     FastLED.show();
-//     if(sleepInterruptible(speedMs)) return false;
-//   }
-//   return true;
-// }
-
-// bool flashAnimationBuilder(int count, int timeOff, int timeOn, CRGB color){
-//   for(int i = 0; i < count || count < 0; i++){
-//     //so the calling op can know to kill itself if exit was forced
-//     if(stopAnimation) return false;
-
-//     Serial.println("Flash off");
-//     LedDriver::setColor(CRGB::Black);
-//     if(sleepInterruptible(timeOff)) return false;
-
-//     Serial.println("Flash on");
-//     LedDriver::setColor(color);
-//     if(sleepInterruptible(timeOn)) return false;
-//   }
-//   Serial.println("Exited loop, flash off");
-//   LedDriver::setColor(CRGB::Black);
-//   //to tell the calling op that you weren't interrupted, you stopped on your own
-//   return true;
-// }
-
-// void setColorAnimationAtomic(CRGB color) {
-//   stopCurrentAnimation();
-//   LedDriver::setColor(color);
-// }

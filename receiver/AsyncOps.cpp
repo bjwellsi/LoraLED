@@ -18,7 +18,7 @@ namespace AsyncOps{
   }
 
   bool flashAnimationBuilder(int count, int timeOff, int timeOn, CRGB color){
-    for(int i = 0; i < count || count < 0; i++){
+    for(int i = 0; i < count || count < 1; i++){
       //so the calling op can know to kill itself if exit was forced
       if(stopAnimation) return false;
 

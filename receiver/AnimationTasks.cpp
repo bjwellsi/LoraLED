@@ -4,7 +4,7 @@
 
 namespace AnimationTasks{
   void errAnimationTask(void* parameter){
-    AsyncOps::flashAnimationBuilder(-1, 200, 200, CRGB::Red);
+    AsyncOps::flashAnimationBuilder(0, 200, 200, CRGB::Red);
     TaskHandling::cleanupAnimationTask();
   }
 
@@ -17,7 +17,7 @@ namespace AnimationTasks{
   }
 
   void idAssignmentAnimationTask(void* parameter){
-    AsyncOps::flashAnimationBuilder(-1, 100, 1000, CRGB::Blue);
+    AsyncOps::flashAnimationBuilder(0, 100, 1000, CRGB::Blue);
     TaskHandling::cleanupAnimationTask();
   }
 
