@@ -54,8 +54,9 @@ void handleCliCommand(String line){
   else if (line.startsWith("solid ")){
     int targetId, r, g, b;
 
-    int parsed = sscanf(line.c_str(), "solid %d, %d, %d, %d", &targetId, &r, &g, &b);
+    int parsed = sscanf(line.c_str(), "solid %d %d %d %d", &targetId, &r, &g, &b);
     
+    Serial.println(parsed);
     if (parsed != 4) {
       Serial.println("Bad color command");
       return;
@@ -70,7 +71,7 @@ void handleCliCommand(String line){
   else if (line.startsWith("flash ")){
     int targetId, r, g, b, count, timeOff, timeOn;
 
-    int parsed = sscanf(line.c_str(), "flash %d, %d, %d, %d, %d, %d, %d", &targetId, &r, &g, &b, &count, &timeOff, &timeOn);
+    int parsed = sscanf(line.c_str(), "flash %d %d %d %d %d %d %d", &targetId, &r, &g, &b, &count, &timeOff, &timeOn);
 
     if (parsed != 7) {
       Serial.println("Bad flash command");
