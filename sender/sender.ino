@@ -7,6 +7,10 @@ SX1262 radio = new Module(8, 14, 12, 13);
 
 #define LORA_FREQ 915.0
 
+const uint8_t MAX_RECEIVERS  = 32;
+uint8_t receiverCount; 
+uint8_t receivers[MAX_RECEIVERS];
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -24,19 +28,28 @@ void setup() {
 }
 
 void loop() {
-  if (Serial.available() > 0) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
+  String cli = checkCli();
+  if (cli != "") {
+    cli.trim();
 
-    handleCliCommand(line);
+    //TODO make this a new task. 
+    //That way cli can always listen/ have universal interupts
+    handleCliCommand(cli);
 
     Serial.print("Handled command: ");
-    Serial.println(line);
+    Serial.println(cli);
   }
 }
 
+String checkCli() {
+  if (Serial.available() > 0){
+    return Serial.readStringUntil('\n');
+  }
+  return "";
+}
+
 void handleCliCommand(String line){
-  ComDef::Packet packet{}; 
+  ComDef::CommandPacket packet{}; 
 
   if (line.startsWith("off ")){
     int targetId;
@@ -63,7 +76,7 @@ void handleCliCommand(String line){
     }
 
     packet.targetId = (uint8_t)targetId;
-    packet.command = (uint8_t)1;
+    packet.command = (uint8_t)20;
     packet.p1 = (uint8_t)r;
     packet.p2 = (uint8_t)g;
     packet.p3 = (uint8_t)b;
@@ -79,7 +92,7 @@ void handleCliCommand(String line){
     }
 
     packet.targetId = (uint8_t)targetId;
-    packet.command = (uint8_t)2;
+    packet.command = (uint8_t)21;
     packet.p1 = (uint8_t)r;
     packet.p2 = (uint8_t)g;
     packet.p3 = (uint8_t)b;
@@ -89,6 +102,9 @@ void handleCliCommand(String line){
     packet.p7 = (uint8_t)(((uint16_t)timeOn >> 8) & 0xFF);
     packet.p8 = (uint8_t)(((uint16_t)timeOn) & 0xFF);
   }
+  else if (line.starts.wih("init")){
+    initailizeReceivers();
+  }
   else {
     Serial.println("Unknown command");
     return;
@@ -97,7 +113,7 @@ void handleCliCommand(String line){
   sendCommand(packet);
 }
 
-void sendCommand(ComDef::Packet packet) {
+void sendCommand(ComDef::CommandPacket packet) {
   int state = radio.transmit((uint8_t*)&packet, sizeof(packet));
 
   if (state == RADIOLIB_ERR_NONE) {
@@ -106,4 +122,93 @@ void sendCommand(ComDef::Packet packet) {
     Serial.print("Send failed, code: ");
     Serial.println(state);
   }
+}
+
+void sendHandshake(ComDef::Handshake handshake) {
+  int state = radio.transmit((uint8_t*)handshake, sizeof(handshake));
+
+  if (state == RADIOLIB_ERR_NONE) {
+    Serial.print("Sent handshake");
+  } else {
+    Serial.print("Send failed, code: ");
+    Serial.println(state);
+  }
+}
+
+void initializeReceivers(){
+  //reset receivers
+  receiverCount = 0;
+  for(int i = 0; i < MAX_RECEIVERS; i++){
+    receivers[i] = 0;
+  }
+
+  //send out an init command to all radios
+  sendCommand({
+      .targetId = (uint8_t)0,
+      .command = (uint8_t)1
+      });
+  
+  //start listening for responses
+  //once you recieve a command to stop from the user or you hit max entries, break
+  uint32_t startTime = millis();
+  uint32_t timeout = 1000000;
+  bool stop = false;
+  while(millis() - startTime < timeout && stop == false){
+    if(checkCli() == "stop"){
+      //cli command comes in to stop
+      break;
+    }
+    else {
+      ComDef::Handshake handshakeResp;
+      int state = radio.receive((uint8_t*)&handshakeResp, sizeof(handshakeResp));
+      if(state == RADIOLIB__ERR_NONE && handshakeResp.Sender = 0){
+        //handshake initiated by reciever
+        uint64_t uidResponse = handshakeResp.TransientId;
+        //on each response increment r count, add a new entry to r
+        receiverCount++;
+        receivers[receiverCount - 1] = recieverCount;
+        uint32_t handshakeStart = millis();
+        uint32_t handshakeTimeout = 10000;
+        bool receiverInitialized = false;
+        ComDef::Handshake handshakeAssign = {.Sender = 1, .UID = uidResponse, .TransientId = receiverCount}
+        while(millis() - handshakeStart < handshakeTimeout && stop == false){
+          //tell the receiver what its new id is 
+          //response will need to include uidresponse
+          //on a random interval, send the response handshake, listen for ok from the receiver
+          if(checkCli() == "stop"){
+            stop = true;
+            break;
+          }
+          else {
+            ComDef::Handshake handshakeConfirm;
+            int state = radio.receive((uint8_t*)&handshakeConfirm, sizeof(handshakeConfirm));
+            if(state == RADIOLIB__ERR_NONE && handshakeConfirm.Sender = 0){
+              //response received
+              //make sure the values match
+              if(handshakeComfirm.UID = handshakeAssign.UID && handshakeConfirm.TransientId = handshakeAssign.TransientId){
+                receiverInitialized = true;
+                break;
+              }
+              //otherwise just restart the loop and try again
+            }
+            else{
+              //send or resend the uid
+              sendhandshake(handshakeAssign);
+              //wait random amount of time 
+              delay(random(50, 300));
+            }
+          }
+        }
+        if(!receiverInitialized){
+          //handshake timed out, remove the receiver
+          receivers[receiverCount - 1] = 0;
+          receiverCount --;
+        }
+      }
+    }
+    //otherwise restart the loop
+  }
+  //init done, tell the receivers. Whether they got an id or not
+  sendCommand({.command = 0, .targetId = 0})
+  
 }

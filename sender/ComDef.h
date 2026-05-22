@@ -1,7 +1,17 @@
 #pragma once
 
+#include <stdint.h>
+
 namespace ComDef{
-  struct Packet {
+  struct __attribute__((packed)) Handshake {
+    uint8_t TransientId;
+    uint64_t UID;
+    uint8_t Sender;
+  };
+
+  static_assert(sizeof(Handshake) == 10);
+
+  struct __attribute__((packed)) CommandPacket {
     uint8_t targetId;
     uint8_t command;
     uint8_t p1;
@@ -19,4 +29,6 @@ namespace ComDef{
     uint8_t p13;
     uint8_t p14;
   };
+
+  static_assert(sizeof(CommandPacket) == 16);
 }

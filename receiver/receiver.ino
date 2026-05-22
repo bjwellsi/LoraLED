@@ -28,22 +28,16 @@ TaskHandle_t animationTaskHandle = nullptr;
 volatile bool stopAnimation = false;
 volatile bool animationExited = false;
 
-// struct FlashConfig{
-//   int count;
-//   int timeOn;
-//   int timeOff;
-//   CRGB color;
-// };
-
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("Receiver booting");
 
   tubeCount = loadTubeCount();
-  //TODO Actually init this, hardcoded for now
-  tubeCount = 4;
+  TransientID = loadTransientID();
+  //TODO Actually init these, hardcoded for now
   TransientID = 1;
+  tubeCount = 4;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
   
   Serial.print("Loaded ");
@@ -73,7 +67,7 @@ void setup() {
 }
 
 void loop() {
-  ComDef::Packet packet;
+  ComDef::CommandPacket packet;
 
   int state = radio.receive((uint8_t*)&packet, sizeof(packet));
   if (state == RADIOLIB_ERR_NONE) {
@@ -83,10 +77,21 @@ void loop() {
   // else ignore (no packet / timeout)
 }
 
-void processCommand(ComDef::Packet packet){
+void sendHandshake(ComDef::Handshake handshake) {
+  int state = radio.transmit((uint8_t*)handshake, sizeof(handshake));
+
+  if (state == RADIOLIB_ERR_NONE) {
+    Serial.print("Sent handshake");
+  } else {
+    Serial.print("Send failed, code: ");
+    Serial.println(state);
+  }
+}
+
+void processCommand(ComDef::CommandPacket packet){
 
   //parse out the bytes
-  if(packet.targetId != TransientID)
+  if(packet.targetId != 0 && packet.targetId != TransientID)
   {
     //command isn't for this reciever
     return;
@@ -98,12 +103,21 @@ void processCommand(ComDef::Packet packet){
     //color is defined in p1,2,3
   //2 - flash 
     //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
-  if (packet.command == 0) AtomicOps::setColorAnimation(CRGB::Black);
+  if (packet.command == 0) {
+    //stop command
+    //TODO stop init flow
+    AtomicOps::setColorAnimation(CRGB::Black);
+  }
   else if (packet.command == 1) {
+    //TODO make this a task
+    //Will require generalizing your TaskHandler better
+    initializeReceiver();
+  }
+  else if (packet.command == 20) {
     CRGB color = {packet.p1, packet.p2, packet.p3};
     AtomicOps::setColorAnimation(color);
   }
-  else if (packet.command == 2){
+  else if (packet.command == 21){
     CRGB color = {packet.p1, packet.p2, packet.p3};
     uint8_t count = packet.p4; 
     uint16_t offTime = ((uint16_t)packet.p5 << 8) | packet.p6;
@@ -120,20 +134,37 @@ void processCommand(ComDef::Packet packet){
 }
 
 void initializeReceiver(){
-  //so now the init flow is this
-  //boot. if you have a uid/tube count, load them.
-  //if you don't load defaults. 
-  //when you get a command to init, start blinking and transmitting your uid. 
+
+  //this is triggered by recieving an init command
+  //on reception, you do the following
+
+  //reset your transid
+  TransientID = 0;
+
+  //spin up a task to start blinking your idAssignmentAnimation. 
   TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
-  //between transmissions, listen for a response containing your uid and a transid
-  uint8_t uid = 1;
-  saveTransientID(uid);
+
+  //get your guid
+  uint64_t guid = getUID();
+  
+  //start periodically transmitting it. 
+  //between each transmission, you should wait and see if you've recieved a response including 1 your guid, and 2, your new tid. 
+  //the retransmission period should be randomized to avoid collisions
+  //TODO the three points above
+  TransientID = 1;
+
+  //once you get a tid, save it 
+  saveTransientID(TransientID);
+
+  //response with an okay signal 
+  //TODO
+
+  //kill the idassignment animation and turn off the tube
+  TaskHandling::stopCurrentAnimation();
   AtomicOps::setColorAnimation(CRGB::Black);
 
-  //now you can just listen like normal. 
-  //the next step will likely be a tube count transmission signal, but this will be completely initialized via the sender.
-  //what it'll do is assign you a blinking color, once the end user ids you by that color, it'll ask for tube count, they input, then it transmits.
-  //but basically all that is purely sender side logic.
+  //then you're done initializing. you can go back to just listening for commands
+  //right now this will be a syncronous op, but we may want to eventaully change that so we can cancel initialization attempts without a reboot 
 }
 
 uint64_t getUID(){
