@@ -1,5 +1,5 @@
 #include <RadioLib.h>
-#include "ComDef.h"
+#include "../ComDef.h"
 
 // Heltec WiFi LoRa 32 V3 SX1262 pins:
 // Module(NSS, DIO1, RESET, BUSY)

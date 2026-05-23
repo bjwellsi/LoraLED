@@ -2,11 +2,12 @@
 #include <RadioLib.h>
 #include <Preferences.h>
 #include <Arduino.h>
-#include "LedDriver.h"
-#include "AtomicOps.h"
-#include "AnimationTasks.h"
-#include "TaskHandling.h"
-#include "ComDef.h"
+#include "../LedDriver.h"
+#include "../AtomicOps.h"
+#include "../AnimationTasks.h"
+#include "../TaskHandling.h"
+#include "../ComDef.h"
+#include "ReceiverStateManagement.h"
 
 // SX1262 pins for Heltec V3
 // Module(NSS, DIO1, RESET, BUSY)
@@ -27,6 +28,9 @@ int totalLEDs;
 TaskHandle_t animationTaskHandle = nullptr;
 volatile bool stopAnimation = false;
 volatile bool animationExited = false;
+volatile bool radioReceivedFlag = true;
+ReceiverStateManagement::ActiveOP activeOp;
+ReceiverStateManagement::InitContext initContext;
 
 void setup() {
   Serial.begin(115200);
@@ -39,6 +43,9 @@ void setup() {
   TransientID = 1;
   tubeCount = 4;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
+  activeOp = IDLE;
+  initContext.initState = UNINITIALIZED;
+  receivedFlag = false;
   
   Serial.print("Loaded ");
   Serial.print(totalLEDs);
@@ -60,6 +67,8 @@ void setup() {
     TaskHandling::startAnimation(&AnimationTasks::errAnimationTask, nullptr);
     while (true);
   }
+  radio.setPacketReceivedAction(setRadioReceivedFlag);
+  radio.startReceive();
 
   TaskHandling::startAnimation(&AnimationTasks::bootAnimationTask, nullptr);
 
@@ -67,24 +76,66 @@ void setup() {
 }
 
 void loop() {
-  ComDef::CommandPacket packet;
-
-  int state = radio.receive((uint8_t*)&packet, sizeof(packet));
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("Received command");
-    processCommand(packet);
+  //first check if any commands have come in
+  checkRadioBuffer();
+  //then progress any active state machines
+  switch(activeOp){
+    case INT: 
+      intializeReceiver();
+      break;
   }
-  // else ignore (no packet / timeout)
 }
 
-void sendHandshake(ComDef::Handshake handshake) {
-  int state = radio.transmit((uint8_t*)handshake, sizeof(handshake));
+template <typename T>
+bool sendPacket(const T& packet){
+  int state = radio.transmit((uint8_t*)&packet, sizeof(T));
 
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("Sent handshake");
-  } else {
-    Serial.print("Send failed, code: ");
-    Serial.println(state);
+  radio.startReceive();
+
+  return state == RADIOLIB_ERR_NONE;
+}
+
+void checkRadioBuffer(){
+  if(radioReceivedFlag){
+    radioReceivedFlag = false;
+
+    uint8_t buf[64];
+    size_t len = radio.getPacketLength();
+
+    int state = radio.readData(buf, len);
+    if(state == RADIOLIB_ERR_NONE){
+      processRawPacket(buf, len);
+    }
+
+    radio.startReceive();
+  }
+
+}
+
+void processRawPacket(uint8_t buf[64], size_t len){
+    ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf;
+
+    if(header->packetType == HANDSHAKE){
+      if(len != sizeof(ComDef::HandshakePacket)) return;
+      ComDef::HandshakePacket* p = (ComDef::HandshakePacket*)buf;
+      processHandshake(*p);
+    }else if(header->packetType == COMMAND){
+      if(len != sizeof(ComDef::CommandPacket)) return;
+      ComDef::CommandPacket* p = (ComDef::CommandPacket*)buf;
+      processCommand(*p);
+    }
+}
+
+void setRadioReceivedFlag() {
+  radioReceivedFlag = true;
+}
+
+
+void processHandshake(ComDef::HandshakePacket packet){
+  if(packet.UID == getUID() && activeOp == INIT){
+    //we care about it only if if was meant for this particular rec and if the op is currently init
+    initContext.handshakePacket = packet;
+    initContext.handshakeQueued = true;
   }
 }
 
@@ -105,12 +156,12 @@ void processCommand(ComDef::CommandPacket packet){
     //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
   if (packet.command == 0) {
     //stop command
-    //TODO stop init flow
+    //stop init flow
+    activeOps = IDLE;
     AtomicOps::setColorAnimation(CRGB::Black);
   }
   else if (packet.command == 1) {
-    //TODO make this a task
-    //Will require generalizing your TaskHandler better
+    activeOps = INIT;
     initializeReceiver();
   }
   else if (packet.command == 20) {
@@ -135,36 +186,97 @@ void processCommand(ComDef::CommandPacket packet){
 
 void initializeReceiver(){
 
-  //this is triggered by recieving an init command
-  //on reception, you do the following
+  if(activeOp = IDLE){
+    activeOp = INIT;
+  }
 
-  //reset your transid
-  TransientID = 0;
+  if (initContext.initState == ERROR){
+    TaskHandling::startAnimation(&AnimationTasks::errAnimationTask, nullptr);
+    initContext.initState = UNINITIALIZED;
+    initContext.handshakePacket = {.UID = 0, .TransientID = 0, .sender = 0}
+    activeOp = IDLE;
+  }
+  else if(initContext.initState == UNINITIALIZED){
+    //very start of init flow
+    //do the first set of non blocking tasks
+    //reset your transid
+    TransientID = 0;
 
-  //spin up a task to start blinking your idAssignmentAnimation. 
-  TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
-
-  //get your guid
-  uint64_t guid = getUID();
-  
-  //start periodically transmitting it. 
-  //between each transmission, you should wait and see if you've recieved a response including 1 your guid, and 2, your new tid. 
-  //the retransmission period should be randomized to avoid collisions
-  //TODO the three points above
-  TransientID = 1;
-
-  //once you get a tid, save it 
-  saveTransientID(TransientID);
-
-  //response with an okay signal 
-  //TODO
-
-  //kill the idassignment animation and turn off the tube
-  TaskHandling::stopCurrentAnimation();
-  AtomicOps::setColorAnimation(CRGB::Black);
-
-  //then you're done initializing. you can go back to just listening for commands
-  //right now this will be a syncronous op, but we may want to eventaully change that so we can cancel initialization attempts without a reboot 
+    //spin up a task to start blinking your idAssignmentAnimation. 
+    TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
+    
+    initContext.handshakePacket = {.UID = getUID(), .TransientID = 0, .sender = 0};
+    initContext.handshakeQueued = false;
+    initContext.initState = SENDING_GUID;
+    //progress to stage 2 (1 recursive call)
+    //setting waitStart to be 0 so 1 call will happen right away
+    initContext.waitStart = 0;
+    initializeReceiver();
+  }
+  else if(initContext.initState == SENDING_GUID){
+    if (initContext.handshakeQueued){
+      initContext.handshakeQueued = false;
+      initContext.initState = TID_RECEIVED;
+    }
+    else if (millis() - initContext.waitStart > random(20, 200)) {
+      //Send the packet
+      sendPacket(initContext.handshakePacket)
+      initContext.waitStart = millis();
+      //allow the event loop to take back over
+    }
+  }
+  else if(initContext.initState == TID_RECEIVED){
+    //process packet
+    ComDef::HandshakePacket packet = initContext.handshakePacket;
+    if(packet.sender != 1 || packet.UID != getUID() || packet.TransientID = 0){
+      //this packet wasn't for you or is invalid
+      initContext.initState = SENDING_GUID;
+      initContext.waitStart = millis();
+    }
+    else {
+      //save the transientID
+      saveTransientID(packet.TransientID);
+      initContext.handshakePacket.sender = 0;
+      initContext.initState = SENDING_OKAY; 
+      initContext.waitStart = 0;
+      initializeReceiver();
+    }
+  }
+  else if(initContext.initState == SENDING_OKAY){
+    //TODO
+    //
+    //SO actually I think here onward is redundant. 
+    //We should send 1 okay message after saving the transid. 
+    //then we simply save the most recent message id, 
+    //and if we hear a retransmission of that id, reack. otherwise we just assume the parent heard us
+    if(initContext.handshakeQueued){
+      initContext.handshakeQueued = false;
+      initContext.initState = OKAY_RECEIVED;
+    }
+    if(millis() - initContext.waitStart > random(20, 200)) {
+      //send the packet
+      sendPacket(initContext.handshakePacket)
+      initContext.waitStart = millis();
+    }
+    //next state change will be handled by a radio command coming in
+  }
+  else if(initContext.initState == OKAY_RECEIVED){
+    ComDef::HandshakePacket packet = initContext.handshakePacket;
+    if(packet.sender != 1 || packet.uid != getUID() || packet.TransientID != )
+    //you're done, kill the init context
+    initContext.handshakePacket = {.UID = 0, .sender = 0, .TransientID = 0};
+    //kill the idassignment animation and turn off the tube
+    TaskHandling::stopCurrentAnimation();
+    AtomicOps::setColorAnimation(CRGB::Black);
+    initContext.initState = INITIALIZED;
+    activeOp = IDLE;
+  }
+  else if(initContext.initState == INITIALIZED){
+    //this should only be reached if the ack wasn't received by the sender
+    //check the message id of your new message and the ids received in the new message
+    //if either match, response with an affirmative ack
+    //TODO
+  }
 }
 
 uint64_t getUID(){
@@ -177,6 +289,7 @@ void clearMemory(){
 }
 
 void saveTransientID(uint8_t id){
+  TransientID = id;
   prefs.begin("config", false);
   prefs.putUChar("id", id);
   prefs.end();

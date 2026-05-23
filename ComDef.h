@@ -3,15 +3,29 @@
 #include <stdint.h>
 
 namespace ComDef{
+  enum PacketType : uint8_t {
+    HANDSHAKE = 1,
+    COMMAND = 2,
+    ACK = 3
+  }
+
+  struct __attribute__((packed)) PacketHeader {
+    uint8_t packetType;
+    uint16_t sequence;
+  }
+  static_assert(sizeof(PacketHeader) == 3);
+  
   struct __attribute__((packed)) Handshake {
+    PacketHeader header;
     uint8_t TransientId;
     uint64_t UID;
     uint8_t Sender;
   };
 
-  static_assert(sizeof(Handshake) == 10);
+  static_assert(sizeof(Handshake) == 13);
 
   struct __attribute__((packed)) CommandPacket {
+    PacketHeader header;
     uint8_t targetId;
     uint8_t command;
     uint8_t p1;
@@ -30,5 +44,5 @@ namespace ComDef{
     uint8_t p14;
   };
 
-  static_assert(sizeof(CommandPacket) == 16);
+  static_assert(sizeof(CommandPacket) == 19);
 }
