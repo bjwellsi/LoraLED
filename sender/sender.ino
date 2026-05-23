@@ -7,20 +7,26 @@ volatile bool radioReceivedFlag = true;
 SX1262 radio;
 const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = nullptr, .onAck = processAck};
 
-const uint8_t MAX_RECEIVERS  = 32;
+const uint8_t MAX_RECEIVERS = 32;
 uint8_t receiverCount; 
 uint8_t receivers[MAX_RECEIVERS];
 
+uint16_t currentSequence;
+
 SenderStateManagement::ActiveOp activeOp;
-SenderStateManagement::InitState initState;
+SenderStateManagement::InitContext initContext;
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("Sender booting");
 
+  initContext.initState = UNINITIALIZED;
+  initContext.handshakeQueued = false;
+
   RadioHandler::initRadio();
   ActiveOp = IDLE;
+  currentSequence = 0;
 
   Serial.println("Sender ready");
 }
@@ -30,12 +36,15 @@ void loop() {
   if (cli != "") {
     cli.trim();
 
-    //TODO make this a new task. 
-    //That way cli can always listen/ have universal interupts
     handleCliCommand(cli);
 
     Serial.print("Handled command: ");
     Serial.println(cli);
+  }
+  switch (activeOp){
+    case INIT: 
+      initailizeReceivers();
+      break;
   }
 }
 
@@ -47,7 +56,8 @@ String checkCli() {
 }
 
 void handleCliCommand(String line){
-  ComDef::CommandPacket packet{}; 
+  ComDef::CommandPacket packet = {.header = {.packetType = COMMAND, .sequence = currentSequence}}; 
+  currentSequence++;
 
   if (line.startsWith("off ")){
     int targetId;
@@ -112,23 +122,67 @@ void handleCliCommand(String line){
 }
 
 void initializeReceivers(){
+  //TODO check the timeout. 
+  //every loop needs to make this comparison so that no matter where we are in the process we can interrupt
+  if(initContext.initState == STOP){
+    //you're done, you've either hit your timeout or been commanded to stop
+    //TODO
+    //if there's a current rec being saved, remove it
+    initContet.initState = INITIALIZED;
+    activeOp = IDLE;
+  }
+  else if(initContext.initState == UNINITIALIZED){
+    //begin fresh
 
+    //reset receivers
+    receiverCount = 0;
+    for(int i = 0; i < MAX_RECEIVERS; i++){
+      receivers[i] = 0;
+    }
+  
+    initContext.initState = SENDING_INIT_COMMAND;
+    initContet.increment = 0;
+    initContext.commandPacket = {.header = {.packetType = COMMAND, .sequence = currentSequence}
+      .targetId = (uint8_t)0, .command = 1
+      }; 
+    initContext.currentSequence++;
+    initContext.waitStart = millis();
+  }
+  else if(initContext.initState == SENDING_INIT_COMMAND){
+    //send out an init command to all radios
+    //could retry this over and over, but that's needlessly complex
+    //instead just gonna chirp it 3 times and call that good
+    if(initContext.increment < 3){
+      if (millis() - initContext.waitStart > random(20, 200)) {
+        RadioHandler::sendPacket(packet);
+        initContext.increment++;
+        initContext.waitStart = millis();
+      }
+    }
+    else {
+      initContext.increment = 0;
+      initContext.initState = LISTENING_FOR_RECEIVERS;
+    }
+  }
+  else if(initContext.initState == LISTENING_FOR_RECEIVERS && initContext.handshakeQueued){
+    //TODO
+    //a handshake has been initiated by a rec
+    //get the next rec transid, build a packet with it
+    //save the rec
+    initContext.initState = SENDING_TID;
+  }
+  else if(initContext.initState = SENDING_TID){
+    //TODO
+    //periodically send tid until you get an ack or you timeout
+    //if no ack comes in and you hit your timeout remove the rec
+    //restart the loop to listen for other 
+    initContext.initState = LISTENING_FOR_RECEIVERS;
+  } 
 }
 
 
 
 void initializeReceivers(){
-  //reset receivers
-  receiverCount = 0;
-  for(int i = 0; i < MAX_RECEIVERS; i++){
-    receivers[i] = 0;
-  }
-
-  //send out an init command to all radios
-  sendCommand({
-      .targetId = (uint8_t)0,
-      .command = (uint8_t)1
-      });
   
   //start listening for responses
   //once you recieve a command to stop from the user or you hit max entries, break

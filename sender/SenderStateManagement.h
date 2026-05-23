@@ -10,14 +10,16 @@ namespace SenderStateManagement{
   
   enum InitState{
     UNINITIALIZED,
-    SENDING_GUID,
-    TID_RECEIVED, 
-    SENDING_OKAY,
     ERROR,
     INITIALIZED
   };
 
   struct InitContext{
     uint16_t handshakeSequence;
+    InitState initState;
+    ComDef::CommandPacket commandPacket;
+    ComDef::HandshakePacket handshakePacket;
+    bool handshakeQueued;
+    int increment;
   }
 }
