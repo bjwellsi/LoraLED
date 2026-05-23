@@ -1,28 +1,26 @@
 #include <RadioLib.h>
 #include "../ComDef.h"
+#include "../RadioHandler.h"
+#include "SenderStateManagement.h"
 
-// Heltec WiFi LoRa 32 V3 SX1262 pins:
-// Module(NSS, DIO1, RESET, BUSY)
-SX1262 radio = new Module(8, 14, 12, 13);
-
-#define LORA_FREQ 915.0
+volatile bool radioReceivedFlag = true;
+SX1262 radio;
+const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = nullptr, .onAck = processAck};
 
 const uint8_t MAX_RECEIVERS  = 32;
 uint8_t receiverCount; 
 uint8_t receivers[MAX_RECEIVERS];
+
+SenderStateManagement::ActiveOp activeOp;
+SenderStateManagement::InitState initState;
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("Sender booting");
 
-  int state = radio.begin(LORA_FREQ);
-
-  if (state != RADIOLIB_ERR_NONE) {
-    Serial.print("Radio init failed, code: ");
-    Serial.println(state);
-    while (true);
-  }
+  RadioHandler::initRadio();
+  ActiveOp = IDLE;
 
   Serial.println("Sender ready");
 }
@@ -110,30 +108,14 @@ void handleCliCommand(String line){
     return;
   }
 
-  sendCommand(packet);
+  RadioHandler::sendPacket(packet);
 }
 
-void sendCommand(ComDef::CommandPacket packet) {
-  int state = radio.transmit((uint8_t*)&packet, sizeof(packet));
+void initializeReceivers(){
 
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("Sent packet");
-  } else {
-    Serial.print("Send failed, code: ");
-    Serial.println(state);
-  }
 }
 
-void sendHandshake(ComDef::Handshake handshake) {
-  int state = radio.transmit((uint8_t*)handshake, sizeof(handshake));
 
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("Sent handshake");
-  } else {
-    Serial.print("Send failed, code: ");
-    Serial.println(state);
-  }
-}
 
 void initializeReceivers(){
   //reset receivers

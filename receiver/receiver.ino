@@ -1,5 +1,4 @@
 #include <FastLED.h>
-#include <RadioLib.h>
 #include <Preferences.h>
 #include <Arduino.h>
 #include "../LedDriver.h"
@@ -7,11 +6,8 @@
 #include "../AnimationTasks.h"
 #include "../TaskHandling.h"
 #include "../ComDef.h"
+#include "../RadioHandler.h"
 #include "ReceiverStateManagement.h"
-
-// SX1262 pins for Heltec V3
-// Module(NSS, DIO1, RESET, BUSY)
-SX1262 radio = new Module(8, 14, 12, 13);
 
 Preferences prefs;
 
@@ -19,7 +15,6 @@ Preferences prefs;
 #define LEDS_PER_TUBE 14
 #define LED_TYPE  WS2811
 #define COLOR_ORDER BRG
-#define LORA_FREQ 915.0
 
 CRGB* leds = nullptr;
 uint8_t tubeCount;
@@ -29,6 +24,9 @@ TaskHandle_t animationTaskHandle = nullptr;
 volatile bool stopAnimation = false;
 volatile bool animationExited = false;
 volatile bool radioReceivedFlag = true;
+SX1262 radio;
+const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = processCommand, .onAck = nullptr};
+
 ReceiverStateManagement::ActiveOP activeOp;
 ReceiverStateManagement::InitContext initContext;
 
@@ -44,7 +42,6 @@ void setup() {
   totalLEDs = tubeCount * LEDS_PER_TUBE;
   activeOp = IDLE;
   initContext.initState = UNINITIALIZED;
-  receivedFlag = false;
   
   Serial.print("Loaded ");
   Serial.print(totalLEDs);
@@ -58,17 +55,7 @@ void setup() {
   FastLED.setBrightness(100);
   FastLED.clear(true);
   
-  int state = radio.begin(LORA_FREQ);
-
-  if (state != RADIOLIB_ERR_NONE) {
-    Serial.print("Radio init failed, code: ");
-    Serial.println(state);
-    TaskHandling::startAnimation(&AnimationTasks::errAnimationTask, nullptr);
-    while (true);
-  }
-  radio.setPacketReceivedAction(setRadioReceivedFlag);
-  radio.startReceive();
-
+  RadioHandler::initRadio();
   TaskHandling::startAnimation(&AnimationTasks::bootAnimationTask, nullptr);
 
   Serial.println("Receiver ready");
@@ -76,61 +63,13 @@ void setup() {
 
 void loop() {
   //first check if any commands have come in
-  checkRadioBuffer();
+  RadioHandler::checkRadioBuffer(radioCallbacks);
   //then progress any active state machines
   switch(activeOp){
     case INT: 
       intializeReceiver();
       break;
   }
-}
-
-template <typename T>
-bool sendPacket(const T& packet){
-  int state = radio.transmit((uint8_t*)&packet, sizeof(T));
-
-  radio.startReceive();
-
-  return state == RADIOLIB_ERR_NONE;
-}
-
-void sendAck(ComDef::AckStatus status, uint16_t sequence){
-  ComDef::Ack ack = {.header = {.packetType = ACK, .sequence = sequence} .status = status}
-  sendPacket(ack);
-}
-
-void checkRadioBuffer(){
-  if(radioReceivedFlag){
-    radioReceivedFlag = false;
-
-    uint8_t buf[64];
-    size_t len = radio.getPacketLength();
-
-    int state = radio.readData(buf, len);
-    if(state == RADIOLIB_ERR_NONE){
-      processRawPacket(buf, len);
-    }
-
-    radio.startReceive();
-  }
-}
-
-void setRadioReceivedFlag() {
-  radioReceivedFlag = true;
-}
-
-void processRawPacket(uint8_t buf[64], size_t len){
-    ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf;
-
-    if(header->packetType == HANDSHAKE){
-      if(len != sizeof(ComDef::HandshakePacket)) return;
-      ComDef::HandshakePacket* p = (ComDef::HandshakePacket*)buf;
-      processHandshake(*p);
-    }else if(header->packetType == COMMAND){
-      if(len != sizeof(ComDef::CommandPacket)) return;
-      ComDef::CommandPacket* p = (ComDef::CommandPacket*)buf;
-      processCommand(*p);
-    }
 }
 
 void processHandshake(ComDef::HandshakePacket packet){
@@ -157,7 +96,6 @@ void processHandshake(ComDef::HandshakePacket packet){
 }
 
 void processCommand(ComDef::CommandPacket packet){
-
   //parse out the bytes
   if(packet.targetId != 0 && packet.targetId != TransientID)
   {
@@ -238,7 +176,7 @@ void initializeReceiver(){
     }
     else if (millis() - initContext.waitStart > random(20, 200)) {
       //Send the packet
-      sendPacket(initContext.handshakePacket)
+      RadioHandler::sendPacket(initContext.handshakePacket)
       initContext.waitStart = millis();
       //allow the event loop to take back over
     }
@@ -256,7 +194,7 @@ void initializeReceiver(){
       saveTransientID(packet.TransientID);
       initContext.mostRecentSequence = packet.header.sequence;
       //acknowledge
-      sendAck(SUCCESS, initContext.mostRecentSequence);
+      RadioHandler::sendAck(SUCCESS, initContext.mostRecentSequence);
       //clear the lights
       TaskHandling::stopCurrentAnimation();
       AtomicOps::setColorAnimation(CRGB::Black);
