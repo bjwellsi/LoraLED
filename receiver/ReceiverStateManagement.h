@@ -22,5 +22,6 @@ namespace ReceiverStateManagement{
     int waitStart;
     ComDef::HandshakePacket handshakePacket;
     bool handshakeQueued;
+    uint16_t mostRecentSequence;
   }
 }

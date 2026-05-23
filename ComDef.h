@@ -7,7 +7,12 @@ namespace ComDef{
     HANDSHAKE = 1,
     COMMAND = 2,
     ACK = 3
-  }
+  };
+
+  enum AckStatus : uint8_t {
+    SUCCESS = 1,
+    ERROR = 2
+  };
 
   struct __attribute__((packed)) PacketHeader {
     uint8_t packetType;
@@ -15,6 +20,12 @@ namespace ComDef{
   }
   static_assert(sizeof(PacketHeader) == 3);
   
+  struct __attribute__((packed)) Ack {
+    PacketHeader header;
+    uint8_t status;
+  }
+  static_assert(sizeof(Ack) == 4);
+
   struct __attribute__((packed)) Handshake {
     PacketHeader header;
     uint8_t TransientId;

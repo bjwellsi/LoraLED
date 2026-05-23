@@ -39,8 +39,7 @@ void setup() {
 
   tubeCount = loadTubeCount();
   TransientID = loadTransientID();
-  //TODO Actually init these, hardcoded for now
-  TransientID = 1;
+  //TODO Actually init this, hardcoded for now
   tubeCount = 4;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
   activeOp = IDLE;
@@ -95,6 +94,11 @@ bool sendPacket(const T& packet){
   return state == RADIOLIB_ERR_NONE;
 }
 
+void sendAck(ComDef::AckStatus status, uint16_t sequence){
+  ComDef::Ack ack = {.header = {.packetType = ACK, .sequence = sequence} .status = status}
+  sendPacket(ack);
+}
+
 void checkRadioBuffer(){
   if(radioReceivedFlag){
     radioReceivedFlag = false;
@@ -109,7 +113,10 @@ void checkRadioBuffer(){
 
     radio.startReceive();
   }
+}
 
+void setRadioReceivedFlag() {
+  radioReceivedFlag = true;
 }
 
 void processRawPacket(uint8_t buf[64], size_t len){
@@ -126,16 +133,26 @@ void processRawPacket(uint8_t buf[64], size_t len){
     }
 }
 
-void setRadioReceivedFlag() {
-  radioReceivedFlag = true;
-}
-
-
 void processHandshake(ComDef::HandshakePacket packet){
-  if(packet.UID == getUID() && activeOp == INIT){
-    //we care about it only if if was meant for this particular rec and if the op is currently init
-    initContext.handshakePacket = packet;
-    initContext.handshakeQueued = true;
+  if(packet.UID == getUID(){
+    //don't care about packets from/for other recs
+    if(activeOp == INIT){
+      //pass the packet along to the state machine
+      initContext.handshakePacket = packet;
+      initContext.handshakeQueued = true;
+    }
+    else if(initContext.initState == INITIALIZED){
+      //state machine isn't active
+      //likely means the ack wasn't heard
+      //confirm values and reack
+      uint16_t sequence = packet.sequence;
+      if(sequence == initContext.mostRecentSequence || packet.TransientID = TransientID){
+        initContext.mostRecentSequence = sequence;
+        sendAck(SUCCESS, sequence);
+      }
+      else {
+        sendAck(ERROR, sequence);
+      }
   }
 }
 
@@ -208,6 +225,7 @@ void initializeReceiver(){
     initContext.handshakePacket = {.UID = getUID(), .TransientID = 0, .sender = 0};
     initContext.handshakeQueued = false;
     initContext.initState = SENDING_GUID;
+    initContext.mostRecentSequence = 0;
     //progress to stage 2 (1 recursive call)
     //setting waitStart to be 0 so 1 call will happen right away
     initContext.waitStart = 0;
@@ -236,46 +254,16 @@ void initializeReceiver(){
     else {
       //save the transientID
       saveTransientID(packet.TransientID);
-      initContext.handshakePacket.sender = 0;
-      initContext.initState = SENDING_OKAY; 
-      initContext.waitStart = 0;
-      initializeReceiver();
+      initContext.mostRecentSequence = packet.header.sequence;
+      //acknowledge
+      sendAck(SUCCESS, initContext.mostRecentSequence);
+      //clear the lights
+      TaskHandling::stopCurrentAnimation();
+      AtomicOps::setColorAnimation(CRGB::Black);
+      //you're done!
+      initContext.initState = INITIALIZED;
+      activeOp = IDLE;
     }
-  }
-  else if(initContext.initState == SENDING_OKAY){
-    //TODO
-    //
-    //SO actually I think here onward is redundant. 
-    //We should send 1 okay message after saving the transid. 
-    //then we simply save the most recent message id, 
-    //and if we hear a retransmission of that id, reack. otherwise we just assume the parent heard us
-    if(initContext.handshakeQueued){
-      initContext.handshakeQueued = false;
-      initContext.initState = OKAY_RECEIVED;
-    }
-    if(millis() - initContext.waitStart > random(20, 200)) {
-      //send the packet
-      sendPacket(initContext.handshakePacket)
-      initContext.waitStart = millis();
-    }
-    //next state change will be handled by a radio command coming in
-  }
-  else if(initContext.initState == OKAY_RECEIVED){
-    ComDef::HandshakePacket packet = initContext.handshakePacket;
-    if(packet.sender != 1 || packet.uid != getUID() || packet.TransientID != )
-    //you're done, kill the init context
-    initContext.handshakePacket = {.UID = 0, .sender = 0, .TransientID = 0};
-    //kill the idassignment animation and turn off the tube
-    TaskHandling::stopCurrentAnimation();
-    AtomicOps::setColorAnimation(CRGB::Black);
-    initContext.initState = INITIALIZED;
-    activeOp = IDLE;
-  }
-  else if(initContext.initState == INITIALIZED){
-    //this should only be reached if the ack wasn't received by the sender
-    //check the message id of your new message and the ids received in the new message
-    //if either match, response with an affirmative ack
-    //TODO
   }
 }
 
