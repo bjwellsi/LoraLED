@@ -128,6 +128,7 @@ void initializeReceivers(){
     //you're done, you've either hit your timeout or been commanded to stop
     //TODO
     //if there's a current rec being saved, remove it
+    //send a stop command to all radios. Again, chirp it three times
     initContet.initState = INITIALIZED;
     activeOp = IDLE;
   }
