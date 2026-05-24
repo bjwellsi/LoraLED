@@ -6,31 +6,21 @@
 
 namespace RadioHandler{
 
-  using RadioOpStateMachineFunction = void (*)(RadioOpContext&);
+  using RadioOpStateMachineFunction = void (*)();
+  using OnCompleteFunction = void (*)(ResponseCode responseCode);
 
   template <typename T>
   struct RadioOpContext{
     RadioOpStateMachineFunction activeSM = nullptr;
     bool opActive = false;
-    const T& packet = nullptr;
+    const T* packet = nullptr;
+    ComDef::AckStatus ackStatus = NO_RESPONSE;
     int maxRetries = -1;
     int currentRetryCount = -1;
     int timeoutEndTime = -1;
     int waitStart = -1;
     ResponseCode responseCode = OP_NOT_STARTED;
-
-    void tick(){
-      if(opActive && activeSM){
-        activeSM(*this);
-      }
-    }
-
-    void interrupt(){
-      if(opActive){
-        opActive = false;
-        responseCode = OP_INTERRUPTED;
-      }
-    }
+    OnCompleteFunction onCompleteFunction = nullptr;
 
     void reset(){
       *this = RadioOpContext{};
@@ -56,8 +46,9 @@ namespace RadioHandler{
   struct RadioCallbacks {
     void (*onHandshake)(const ComDef::Handshake& p) = nullptr;
     void (*onCommand)(const ComDef::CommandPacket& p) = nullptr;
-    void (*onAck)(const ComDef::Ack& p) = nullptr;
   };
+
+  void tickRadio();
 
   template <typename T>
   ResponseCode sendTillAck(const T& packet, int maxRetries, int timeout); 
@@ -72,12 +63,15 @@ namespace RadioHandler{
 
   void initRadio();
 
-  void checkRadioBuffer(RadioCallbacks& cb);
+  void checkRadioBuffer();
 
   void setRadioReceivedFlag();
 
-  void processRawPacket(uint8_t buf[64], size_t len, RadioCallbacks& cb);
+  void processRawPacket(uint8_t buf[64], size_t len);
 
   void tickRadio();
 
+  void processStop(ResponseCode endResponseCode);
+
+  void interrupt();
 }

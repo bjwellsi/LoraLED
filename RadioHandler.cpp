@@ -9,17 +9,10 @@ extern RadioCallBacks radioCallbacks;
 namespace RadioHandler{
 
   void tickRadio(){
-    //TODO
-    //so this is a little different than the old strat. 
-    //instead of simply listening and forwarding requests, this needs to handle things a little differently. 
-    //what it should do is 
-    //every loop, check the buffer. 
-    //if a req has come in, cast it
-    //if it's a command or a handshake, pass it along to the callback provided. 
-    //if it's an ack, PROCESS IT yourself
-    //basically see if you have an active req waiting for an ack and if the ack you received is for you/the current request
-    //if so, then you can save the ack and call the ack callback
-    //otherwise tick the current state machine and end the tick
+    checkRadioBuffer();
+    if(radioOpContext.opActive && radioOpContext.activeSM){
+      radioOpContext.activeSM();
+    }
   }
 
   template <typename T>
@@ -28,7 +21,7 @@ namespace RadioHandler{
     if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
     radioOpContext.reset();
     radioOpContext.waitStart = 0;
-    radioOpContext.packet = packet;
+    radioOpContext.packet = &packet;
     radioOpContext.timeoutEndTime = millis() + timeout;
     radioOpContext.maxRetries = maxRetries;
     radioOpContext.activeSM = sendTillAckStateMachine;
@@ -39,24 +32,15 @@ namespace RadioHandler{
 
   static void sendTillAckStateMachine(){
     if(millis() > radioOpContext.timeouEndTime || (radioOpContext.maxRetries >= 0 && radioOpContext.currentRetryCount > radioOpContext.maxRetries)){
-      radioOpContext.responseCode = TIMEOUT;
-      radioOpContext.opActive = false;
-      radioState = LISTENING;
+      radioOpContext.processStop(TIMEOUT);
     }
-    else if(1=){
-      //check if ack received 
-      //TODO
-      if(1=1){
-        //check ack success
-        //TODO
-        radioOpContext.responseCode = ACK_RECEIVED;
+    else if(radioOpContext.ackStatus != NO_RESPONSE){
+      if(radioOpContext.ackStatus == SUCCESS){
+        radioOpContext.processStop(ACK_RECEIVED);
       }
-      else {
-        //else ack err
-        radioOpContext.responseCode = ACK_ERROR;
+      else{
+        radioOpContext.processStop(ACK_ERROR);
       }
-      radioOpContext.opActive = false;
-      radioState = LISTENING;
     }
     else{
       if(millis() > radioOpContext.waitStart + random(20,200)){
@@ -74,7 +58,7 @@ namespace RadioHandler{
     if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
     radioOpContext.reset();
     radioOpContext.waitStart = 0;
-    radioOpContext.packet = packet;
+    radioOpContext.packet = &packet;
     radioOpContext.maxRetries = sendCount;
     radioOpContext.retryCount = 0;
     radioOpContext.timeoutEndTime = millis() + timeout;
@@ -84,19 +68,14 @@ namespace RadioHandler{
     radioOpContext.responseCode = OP_ACTIVE;
   }
 
-  template <typename T>
   static void sendNTimesStateMachine(){
     if(millis() > radioOpContext.timeoutEndTime){
       //exit err
-      radioOpContext.responseCode = TIMEOUT;
-      radioOpContext.opActive = false;
-      radioState = LISTENING;
+      radioOpContext.processStop(TIMOUT);
     }
     else if(radioOpContext.retryCount >= radioOpContext.maxRetries){
       //exit success
-      radioOpContext.responseCode = SENT_NO_ACK;
-      radioOpContext.opActive = false;
-      radioState = LISTENING;
+      radioOpContext.processStop(SENT_NO_ACK);
     }
     else {
       if(millis() > radioOpContext.waitStart + random(20, 200)){
@@ -141,7 +120,7 @@ namespace RadioHandler{
     radioState = LISTENING;
   }
 
-  void checkRadioBuffer(RadioCallbacks& cb){
+  void checkRadioBuffer(){
     if(radioReceivedFlag){
       radioReceivedFlag = false;
 
@@ -150,7 +129,7 @@ namespace RadioHandler{
 
       int state = radio.readData(buf, len);
       if(state == RADIOLIB_ERR_NONE){
-        processRawPacket(buf, len, cb);
+        processRawPacket(buf, len, radioCallbacks);
       }
 
       radio.startReceive();
@@ -161,8 +140,18 @@ namespace RadioHandler{
     radioReceivedFlag = true;
   }
 
-  void processRawPacket(uint8_t buf[64], size_t len, RadioCallbacks& cb){
+  void processStop(ResponseCode endResponseCode){
+    radioState = LISTENING;
+    radioOpContext.opActive = false;
+    radioOpContext.responseCode = endResponseCode;
+    radioOpContext.onCompleteFunction(radioOpContext.ResponseCode);
+  }
 
+  void interrupt(){
+    processStop(OP_INTERRUPTED);
+  }
+
+  void processRawPacket(uint8_t buf[64], size_t len){
     ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf; 
     if(header->packetType == HANDSHAKE){
       if(len != sizeof(ComDef::HandshakePacket) || !cb.onHandshake) return;
@@ -173,10 +162,15 @@ namespace RadioHandler{
       ComDef::CommandPacket* p = (ComDef::CommandPacket*)buf;
       cb.onCommand(*p);
     }else if(header->packetType == ACK){
-
-      if(len != sizeof(ComDef::Ack) || !cb.onAck) return;
+      //Validate the ack
       ComDef::Ack* p = (ComDef::Ack*)buf;
-      cb.onAck(*p);
+      if(radioOpContext.packet) {
+        uint16_t sequence = radioOpContext.packet->header.sequence;
+        if(radioOpContext.opActive && radioOpContext.ackStatus == NO_RESPONSE && p.header.sequence == sequence){
+          //if ack is valid for current context, store its status
+          radioOpContext.ackStatus = p.status;
+        }
+      }
     }
   }
 }
