@@ -18,10 +18,14 @@ namespace ReceiverStateManagement{
   };
 
   struct InitContext{
-    InitState initState;
-    int waitStart;
-    ComDef::HandshakePacket handshakePacket;
-    bool handshakeQueued;
-    uint16_t mostRecentSequence;
-  }
+    InitState initState = UNINITIALIZED;
+    int waitStart = -1;
+    ComDef::HandshakePacket handshakePacket = nullptr;
+    bool handshakeQueued = false;
+    uint16_t mostRecentSequence = 0;
+
+    void reset(){
+      *this = InitContext{};
+    }
+  };
 }

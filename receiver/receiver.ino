@@ -26,6 +26,8 @@ volatile bool animationExited = false;
 volatile bool radioReceivedFlag = true;
 SX1262 radio;
 const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = processCommand, .onAck = nullptr};
+RadioHandler::RadioOpContext radioOpContext;
+RadioHandler::RadioState radioState;
 
 ReceiverStateManagement::ActiveOP activeOp;
 ReceiverStateManagement::InitContext initContext;
@@ -64,6 +66,7 @@ void setup() {
 void loop() {
   //first check if any commands have come in
   RadioHandler::checkRadioBuffer(radioCallbacks);
+  radioOpContext.tick();
   //then progress any active state machines
   switch(activeOp){
     case INT: 
@@ -164,10 +167,8 @@ void initializeReceiver(){
     initContext.handshakeQueued = false;
     initContext.initState = SENDING_GUID;
     initContext.mostRecentSequence = 0;
-    //progress to stage 2 (1 recursive call)
     //setting waitStart to be 0 so 1 call will happen right away
     initContext.waitStart = 0;
-    initializeReceiver();
   }
   else if(initContext.initState == SENDING_GUID){
     if (initContext.handshakeQueued){
