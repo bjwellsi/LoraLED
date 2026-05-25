@@ -3,11 +3,19 @@
 #include <stdint.h>
 
 namespace ComDef{
+  enum Command : uint8_t {
+    STOP = 0,
+    TRANSMIT_TID = 1, 
+    SOLID_COLOR = 20,
+    FLASH = 21
+  }
+
   enum PacketType : uint8_t {
     INVALID = 0,
-    HANDSHAKE = 1,
+    UID_REPORT = 1,
     COMMAND = 2,
-    ACK = 3
+    ACK = 3,
+    TID_ASSIGN = 4
   };
 
   enum AckStatus : uint8_t {
@@ -36,18 +44,26 @@ namespace ComDef{
   };
   static_assert(sizeof(Ack) == 4);
 
-  struct __attribute__((packed)) Handshake {
+  struct __attribute__((packet)) UIDReportPacket {
     PacketHeader header;
-    uint8_t TransientId = 0;
     uint64_t UID = 0;
-    uint8_t Sender = 0;
 
     void reset(){
-      *this = Handshake{};
-    }
+      *this = UIDReportPacket{};
   };
 
-  static_assert(sizeof(Handshake) == 13);
+  static_asset(sizeof(UIDReportPacket) == 4);
+
+  struct __attrubte__((packed)) TIDAssignmentPacket {
+    PacketHeader header;
+    uint64_t UID = 0;
+    uint8_t TransientID = 0;
+
+    void reset(){
+      *this = TIDAssignmentPacket;
+  };
+
+  static_assert(sizeof(TIDAssignmentPacket) == 8);
 
   struct __attribute__((packed)) CommandPacket {
     PacketHeader header;

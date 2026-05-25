@@ -24,13 +24,11 @@ TaskHandle_t animationTaskHandle = nullptr;
 volatile bool stopAnimation = false;
 volatile bool animationExited = false;
 volatile bool radioReceivedFlag = true;
+uint16_t currentSequence;
 SX1262 radio;
-const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = processCommand, .onAck = nullptr};
+const RadioHandler::RadioCallBacks radioCallbacks = {.onTIDAssignment = processTIDAssignmentPacket, .onCommand = processCommand, onUIDReport = nullptr};
 RadioHandler::RadioOpContext radioOpContext;
 RadioHandler::RadioState radioState;
-
-ReceiverStateManagement::ActiveOP activeOp;
-ReceiverStateManagement::InitContext initContext;
 
 void setup() {
   Serial.begin(115200);
@@ -42,8 +40,6 @@ void setup() {
   //TODO Actually init this, hardcoded for now
   tubeCount = 4;
   totalLEDs = tubeCount * LEDS_PER_TUBE;
-  activeOp = IDLE;
-  initContext.initState = UNINITIALIZED;
   
   Serial.print("Loaded ");
   Serial.print(totalLEDs);
@@ -64,37 +60,15 @@ void setup() {
 }
 
 void loop() {
-  //first check if any commands have come in
-  RadioHandler::checkRadioBuffer(radioCallbacks);
-  radioOpContext.tick();
-  //then progress any active state machines
-  switch(activeOp){
-    case INT: 
-      intializeReceiver();
-      break;
-  }
+  RadioHandler::tickRadio();
 }
 
-void processHandshake(ComDef::HandshakePacket packet){
-  if(packet.UID == getUID(){
-    //don't care about packets from/for other recs
-    if(activeOp == INIT){
-      //pass the packet along to the state machine
-      initContext.handshakePacket = packet;
-      initContext.handshakeQueued = true;
-    }
-    else if(initContext.initState == INITIALIZED){
-      //state machine isn't active
-      //likely means the ack wasn't heard
-      //confirm values and reack
-      uint16_t sequence = packet.sequence;
-      if(sequence == initContext.mostRecentSequence || packet.TransientID = TransientID){
-        initContext.mostRecentSequence = sequence;
-        sendAck(SUCCESS, sequence);
-      }
-      else {
-        sendAck(ERROR, sequence);
-      }
+void processTIDAssignmentPacket(ComDef::TIDAssignmentPacket tidPacket) {
+  if(getUID() == tidPacket.UID){
+    //for now we'll just let this be destructive. 
+    //all it's gonna do is as long as the uid matches, assign the tid and ack
+    saveTransientID(tidPacket.TransientID);
+    RadioHandler::sendAck(SUCCESS, tidPacket.header.sequence);
   }
 }
 
@@ -112,17 +86,21 @@ void processCommand(ComDef::CommandPacket packet){
     //color is defined in p1,2,3
   //2 - flash 
     //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
-  if (packet.command == 0) {
+  if (packet.command == STOP) {
     //stop command
     //stop init flow
     activeOps = IDLE;
     AtomicOps::setColorAnimation(CRGB::Black);
   }
-  else if (packet.command == 1) {
+  else if(packet.command == REPORT_UID){
+    //TODO hardcoded timeouts
+    reportUID(-1, 10000);
+  }
+  else if (packet.command == INIT) {
     activeOps = INIT;
     initializeReceiver();
   }
-  else if (packet.command == 20) {
+  else if (packet.command == SOLID_COLOR) {
     CRGB color = {packet.p1, packet.p2, packet.p3};
     AtomicOps::setColorAnimation(color);
   }
@@ -142,68 +120,16 @@ void processCommand(ComDef::CommandPacket packet){
   }
 }
 
-void initializeReceiver(){
+void reportUID(int maxRetries, int timeout){
+  UIDReportPacket = p {
+    .header = {
+      .sequence = RadioHandler::nextSequence(),
+      packetType = UID_REPORT;
+    }
+    .UID = getUID();
+  };
 
-  if(activeOp = IDLE){
-    activeOp = INIT;
-  }
-
-  if (initContext.initState == ERROR){
-    TaskHandling::startAnimation(&AnimationTasks::errAnimationTask, nullptr);
-    initContext.initState = UNINITIALIZED;
-    initContext.handshakePacket = {.UID = 0, .TransientID = 0, .sender = 0}
-    activeOp = IDLE;
-  }
-  else if(initContext.initState == UNINITIALIZED){
-    //very start of init flow
-    //do the first set of non blocking tasks
-    //reset your transid
-    TransientID = 0;
-
-    //spin up a task to start blinking your idAssignmentAnimation. 
-    TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
-    
-    initContext.handshakePacket = {.UID = getUID(), .TransientID = 0, .sender = 0};
-    initContext.handshakeQueued = false;
-    initContext.initState = SENDING_GUID;
-    initContext.mostRecentSequence = 0;
-    //setting waitStart to be 0 so 1 call will happen right away
-    initContext.waitStart = 0;
-  }
-  else if(initContext.initState == SENDING_GUID){
-    if (initContext.handshakeQueued){
-      initContext.handshakeQueued = false;
-      initContext.initState = TID_RECEIVED;
-    }
-    else if (millis() - initContext.waitStart > random(20, 200)) {
-      //Send the packet
-      RadioHandler::sendPacket(initContext.handshakePacket)
-      initContext.waitStart = millis();
-      //allow the event loop to take back over
-    }
-  }
-  else if(initContext.initState == TID_RECEIVED){
-    //process packet
-    ComDef::HandshakePacket packet = initContext.handshakePacket;
-    if(packet.sender != 1 || packet.UID != getUID() || packet.TransientID = 0){
-      //this packet wasn't for you or is invalid
-      initContext.initState = SENDING_GUID;
-      initContext.waitStart = millis();
-    }
-    else {
-      //save the transientID
-      saveTransientID(packet.TransientID);
-      initContext.mostRecentSequence = packet.header.sequence;
-      //acknowledge
-      RadioHandler::sendAck(SUCCESS, initContext.mostRecentSequence);
-      //clear the lights
-      TaskHandling::stopCurrentAnimation();
-      AtomicOps::setColorAnimation(CRGB::Black);
-      //you're done!
-      initContext.initState = INITIALIZED;
-      activeOp = IDLE;
-    }
-  }
+  RadioHandler::sendTillAck(p, maxRetries, timeout);
 }
 
 uint64_t getUID(){

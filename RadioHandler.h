@@ -9,6 +9,12 @@ namespace RadioHandler{
   using RadioOpStateMachineFunction = void (*)();
   using OnCompleteFunction = void (*)(ResponseCode responseCode);
 
+  //TODO so actually this should be a stack of contexts.
+  //IK that's nasty and complex, but that allows interrupted ops to come back online
+  //ex, say the sender is in the middle of sending a message that needs an ack, 
+  //but a rec comes online in that moment and forces it to send a tid to the rec. 
+  //that send tid op requires fresh context. with the current model that's a problem. 
+  //so you need a stack
   template <typename T>
   struct RadioOpContext{
     RadioOpStateMachineFunction activeSM = nullptr;
@@ -44,8 +50,9 @@ namespace RadioHandler{
   };
 
   struct RadioCallbacks {
-    void (*onHandshake)(const ComDef::Handshake& p) = nullptr;
+    void (*onTIDAssignment)(const ComDef::TIDAssignmentPacket& p) = nullptr;
     void (*onCommand)(const ComDef::CommandPacket& p) = nullptr;
+    void (*onUIDReport)(const ComDef::UIDReportPacket& p) = nullptr;
   };
 
   void tickRadio();
@@ -74,4 +81,6 @@ namespace RadioHandler{
   void processStop(ResponseCode endResponseCode);
 
   void interrupt();
+
+  int nextSequence();
 }

@@ -5,7 +5,7 @@
 
 volatile bool radioReceivedFlag = true;
 SX1262 radio;
-const RadioHandler::RadioCallBacks radioCallbacks = {.onHandshake = processHandshake, .onCommand = nullptr, .onAck = processAck};
+const RadioHandler::RadioCallBacks radioCallbacks = {.TIDAssignmentPacket = nullptr, .onCommand = nullptr, .onUIDReport = processUIDReportPacket};
 
 const uint8_t MAX_RECEIVERS = 32;
 uint8_t receiverCount; 
@@ -73,7 +73,7 @@ void handleCliCommand(String line){
     }
 
     packet.targetId = (uint8_t)targetId;
-    packet.command = (uint8_t)0;
+    packet.command = STOP;
   }
   else if (line.startsWith("solid ")){
     int targetId, r, g, b;
@@ -87,7 +87,7 @@ void handleCliCommand(String line){
     }
 
     packet.targetId = (uint8_t)targetId;
-    packet.command = (uint8_t)20;
+    packet.command = SOLID_COLOR;
     packet.p1 = (uint8_t)r;
     packet.p2 = (uint8_t)g;
     packet.p3 = (uint8_t)b;
@@ -103,7 +103,7 @@ void handleCliCommand(String line){
     }
 
     packet.targetId = (uint8_t)targetId;
-    packet.command = (uint8_t)21;
+    packet.command = FLASH;
     packet.p1 = (uint8_t)r;
     packet.p2 = (uint8_t)g;
     packet.p3 = (uint8_t)b;
@@ -134,14 +134,31 @@ void processAck(ComDef::Ack packet){
   }
 }
 
-void processHandshake(ComDef::HandshakePacket packet){
-  //depends on current flow
-  switch(activeOp){
-    case INIT:
-      initContext.handshakePacket = packet;
-      initContext.handshakeQueued = true;
-      break;
-  }
+void initializeReceivers(){
+  //TODO
+  //k so new flow. 
+  //first we send out a report uid command. save and ack every rec we see
+  //make sure to scan the list on each new rec so that recs that missed our ack don't get saved twice
+  //then, once we've hit lets say 3 s with no new coms in the air, consider all recs reported
+  //atp, loop the list assiging tids till ack 
+  //
+  //
+  //
+  //actually maybe even better idea.
+  //what if the initial "report pls" command is a single op. 
+  //just fire the command and forget. 
+  //but then we process each uidreport packet by simply generating the tid on the spot if it doesn't exist, or saving if it does, and acking right away
+  //that way, recs can just come online in whatever time frame they want
+  //
+  //only issue that introduces is concurrency problems with the radio handler. 
+  //rn the radio handler is setup to only remember 1 state machine at a time. 
+  //if you interrupt an active state machine to send your tid assignment bc a rec comes back online in the middle, you're gonna lose the whole op. 
+  //this is solvable with a stack, but that is going to be annoying lol
+}
+
+void processUIDReportPacket(ComDef::UIDReportPacket){
+  //TODO
+  //this should only ever happen during the init flow
 }
 
 void initializeReceivers(){
@@ -154,7 +171,7 @@ void initializeReceivers(){
     //send a stop command to all radios. Again, chirp it three times
     currentSequence++;
     initContext.commandPacket = {.header = {.packetType = COMMAND, .sequence = currentSequence}
-      .targetId = (uint8_t)0, .command = 0
+      .targetId = (uint8_t)0, .command = STOP
       }; 
     initContext.increment = 0;
     initContext.initState = SENDING_STOP;

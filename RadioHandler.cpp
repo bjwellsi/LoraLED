@@ -5,6 +5,7 @@ extern volatile bool receivedFlag;
 extern volatile RadioState radioState;
 extern RadioOpContext radioOpContext;
 extern RadioCallBacks radioCallbacks;
+extern uint16_t currentSequence;
 
 namespace RadioHandler{
 
@@ -107,6 +108,7 @@ namespace RadioHandler{
     SX1262 radio = new Module(8, 14, 12, 13);
   
     receivedFlag = false;
+    currentSequence = 0;
     int state = radio.begin(LORA_FREQ);
   
     if (state != RADIOLIB_ERR_NONE) {
@@ -129,7 +131,7 @@ namespace RadioHandler{
 
       int state = radio.readData(buf, len);
       if(state == RADIOLIB_ERR_NONE){
-        processRawPacket(buf, len, radioCallbacks);
+        processRawPacket(buf, len);
       }
 
       radio.startReceive();
@@ -153,14 +155,19 @@ namespace RadioHandler{
 
   void processRawPacket(uint8_t buf[64], size_t len){
     ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf; 
-    if(header->packetType == HANDSHAKE){
-      if(len != sizeof(ComDef::HandshakePacket) || !cb.onHandshake) return;
-      ComDef::HandshakePacket* p = (ComDef::HandshakePacket*)buf;
-      cb.onHandshake(*p);
+
+    if(header->packetType == UID_REPORT){
+      if(len != sizeof(ComDef::UIDReportPacket) || !radioCallbacks.onUIDReport) return;
+      ComDef::UIDReportPacket* p = (ComDef::UIDReportPacket*)buf;
+      radioCallbacks.onUIDReport(*p);
+    }else if(header->packetType == TID_ASSIGN){
+      if(len != sizeof(ComDef::TIDAssignmentPacket) || !radioCallbacks.onTIDAssignment) return;
+      ComDef::TIDAssignmentPacket* p = (ComDef::TIDAssignmentPacket*)buf;
+      radioCallbacks.onTIDAssignment(*p);
     }else if(header->packetType == COMMAND){
-      if(len != sizeof(ComDef::CommandPacket) || !cb.onCommand) return;
+      if(len != sizeof(ComDef::CommandPacket) || !radioCallbacks.onCommand) return;
       ComDef::CommandPacket* p = (ComDef::CommandPacket*)buf;
-      cb.onCommand(*p);
+      radioCallbacks.onCommand(*p);
     }else if(header->packetType == ACK){
       //Validate the ack
       ComDef::Ack* p = (ComDef::Ack*)buf;
@@ -172,5 +179,12 @@ namespace RadioHandler{
         }
       }
     }
+  }
+
+  int nextSequence(){
+    //TODO should probably not return sequence if currently sending op
+    //really packet building needs to be officially owned by someone, current interface is leaky
+    currentSequence++;
+    return currentSequence;
   }
 }
