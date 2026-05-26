@@ -17,7 +17,7 @@ namespace RadioHandler{
   }
 
   template <typename T>
-  void sendTillAck(const T& packet, int maxRetries, int timeout){
+  void sendTillAck(const T& packet, int maxRetries, int timeout, void (*)(ResponseCode responseCode) callback){
     //start the state machine
     if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
     radioOpContext.reset();
@@ -29,6 +29,7 @@ namespace RadioHandler{
     radioOpContext.opActive = true;
     radioState = OP_ACTIVE; 
     radioOpContext.responseCode = OP_ACTIVE;
+    radioOpContext.onCompleteFunction = callback;
   }
 
   static void sendTillAckStateMachine(){

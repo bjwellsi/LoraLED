@@ -5,7 +5,7 @@
 namespace SenderStateManagement{
   enum ActiveOp {
     IDLE, 
-    INIT
+    ASSIGNING_TIDS
   };
   
   enum InitState{
@@ -14,22 +14,12 @@ namespace SenderStateManagement{
     INITIALIZED
   };
 
-  struct InitContext{
-    int initTimeout = -1;
-    int initBegin = -1;
-    uint16_t handshakeSequence = 0;
-    InitState initState = UNINITIALIZED;
-    ComDef::CommandPacket commandPacket = nullptr;
-    ComDef::HandshakePacket handshakePacket = nullptr;
-    bool handshakeQueued = false;
-    int increment = -1;
-    uint64_t currentReceiverTarget = 0;
-    bool ackQueued = false;
-    ComDef::Ack ack = nullptr;
-
+  struct AssignMissingTIDsContext{
+    int currentReceiverIndex = 0;
+    bool awaitingAck = false;
+    
     void reset(){
-      *this = InitContext{};
-    }
+      *this = AssignMissingTIDsContext{};
   };
 
   struct Receiver{

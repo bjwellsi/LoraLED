@@ -93,6 +93,7 @@ void processCommand(ComDef::CommandPacket packet){
     AtomicOps::setColorAnimation(CRGB::Black);
   }
   else if(packet.command == REPORT_UID){
+    delay(1000);
     //TODO hardcoded timeouts
     reportUID(-1, 10000);
   }

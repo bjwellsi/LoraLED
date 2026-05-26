@@ -5,7 +5,7 @@
 namespace ComDef{
   enum Command : uint8_t {
     STOP = 0,
-    TRANSMIT_TID = 1, 
+    TRANSMIT_UID = 1, 
     SOLID_COLOR = 20,
     FLASH = 21
   }
