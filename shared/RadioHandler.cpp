@@ -165,6 +165,8 @@ namespace RadioHandler{
 
   void processRawPacket(uint8_t buf[64], size_t len){
     ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf; 
+    Serial.print("Received packet type: ");
+    Serial.println(header->packetType);
 
     if(header->packetType == ComDef::UID_REPORT){
       if(len != sizeof(ComDef::UIDReportPacket) || !radioCallbacks.onUIDReport) return;

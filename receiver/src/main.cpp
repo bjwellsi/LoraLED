@@ -72,6 +72,7 @@ void setup() {
   radioCallbacks.onTIDAssignment = processTIDAssignmentPacket;
   radioCallbacks.onCommand = processCommand;
   
+  delay(1000);
   Serial.println("Receiver ready");
 }
 
@@ -95,6 +96,8 @@ void processCommand(ComDef::CommandPacket packet){
     //command isn't for this reciever
     return;
   }
+  Serial.print("Received command ");
+  Serial.println(packet.command);
 
   //command def for now
   //0 - off
@@ -108,8 +111,20 @@ void processCommand(ComDef::CommandPacket packet){
   }
   else if(packet.command == ComDef::UID_REPORT){
     delay(1000);
+    TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
+
     //TODO hardcoded timeouts
     reportUID(-1, 10000);
+  }
+  else if (packet.command == ComDef::FLASH_TID){
+    AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
+      .count = int(TransientID),
+      .timeOn = 150,
+      .timeOff = 150,
+      .color =  CRGB::Green
+    };
+    Serial.println("Starting flash task");
+    TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
   }
   else if (packet.command == ComDef::SOLID_COLOR) {
     CRGB color = {packet.p1, packet.p2, packet.p3};
@@ -133,10 +148,12 @@ void processCommand(ComDef::CommandPacket packet){
 
 void reportUID(int maxRetries, int timeout){
   ComDef::UIDReportPacket p;
-  p.header.sequence = RadioHandler::nextSequence();
+  p.header.sequence = RadioHandler::nextSequence();    
   p.header.packetType = ComDef::UID_REPORT;
   p.UID = getUID();
-
+  Serial.print("UID ");
+  Serial.println(p.UID);
+  Serial.println("Sending UID");
   RadioHandler::sendTillAck(p, maxRetries, timeout, nullptr);
 }
 

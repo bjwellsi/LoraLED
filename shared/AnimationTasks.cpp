@@ -31,10 +31,8 @@ namespace AnimationTasks{
     CRGB color = config->color;
     delete config;
 
-    Serial.println("Config loaded");
     AsyncOps::flashAnimationBuilder(count, timeOff, timeOn, color);
 
-    Serial.println("Exited loop");
     TaskHandling::cleanupAnimationTask();
   }
 }

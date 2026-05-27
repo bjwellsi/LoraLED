@@ -24,6 +24,7 @@ void assignMissingTIDsStateMachine();
 void assignMissingTIDsCallback(RadioHandler::ResponseCode responseCode);
 String checkCli();
 void processUIDReportPacket(ComDef::UIDReportPacket uidPacket);
+void printTIDs();
 
 void setup() {
   Serial.begin(115200);
@@ -58,19 +59,34 @@ void loop() {
 }
 
 String checkCli() {
-  if (Serial.available() > 0){
-    return Serial.readStringUntil('\n');
+  static String buffer = "";
+
+  if (Serial.available() <= 0) {
+    return "";
   }
+
+  char c = Serial.read();
+
+  if (c == '\r') {
+    return ""; // ignore carriage return from CRLF
+  }
+
+  if (c == '\n') {
+    String line = buffer;
+    buffer = "";
+    return line;
+  }
+
+  buffer += c;
   return "";
 }
 
 void handleCliCommand(String line){
   if (line.startsWith("off ")){
     ComDef::CommandPacket packet;
+
     packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = currentSequence;
-    
-    currentSequence++;
+    packet.header.sequence = RadioHandler::nextSequence(); 
 
     int targetId;
 
@@ -89,16 +105,14 @@ void handleCliCommand(String line){
   }
   else if (line.startsWith("solid ")){
     ComDef::CommandPacket packet;
+
     packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = currentSequence;
-    
-    currentSequence++;
+    packet.header.sequence = RadioHandler::nextSequence(); 
 
     int targetId, r, g, b;
 
     int parsed = sscanf(line.c_str(), "solid %d %d %d %d", &targetId, &r, &g, &b);
     
-    Serial.println(parsed);
     if (parsed != 4) {
       Serial.println("Bad color command");
       return;
@@ -114,10 +128,9 @@ void handleCliCommand(String line){
   }
   else if (line.startsWith("flash ")){
     ComDef::CommandPacket packet;
+
     packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = currentSequence;    
-    
-    currentSequence++;
+    packet.header.sequence = RadioHandler::nextSequence(); 
 
     int targetId, r, g, b, count, timeOff, timeOn;
 
@@ -143,10 +156,9 @@ void handleCliCommand(String line){
   }
   else if (line.startsWith("init")){
     ComDef::CommandPacket packet;
+
     packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = currentSequence;    
-    
-    currentSequence++;
+    packet.header.sequence = RadioHandler::nextSequence(); 
 
     packet.targetId = (uint8_t)0;
     packet.command = ComDef::TRANSMIT_UID;
@@ -155,6 +167,9 @@ void handleCliCommand(String line){
   }
   else if (line.startsWith("tidAssign")){
     assignMissingTIDs();
+  }
+  else if (line.startsWith("tidPrint")){
+    printTIDs();
   }
   else {
     Serial.println("Unknown command");
@@ -165,6 +180,23 @@ void handleCliCommand(String line){
 void assignMissingTIDs(){
   activeOp = SenderStateManagement::ASSIGNING_TIDS; 
   assignMissingTIDsContext.currentReceiverIndex = 0;
+}
+
+void printTIDs(){
+  Serial.println("List of TIDs");
+  for(int i = 0; i < receiverCount; i++){
+    Serial.println(receivers[i].TransientID);
+  }
+  Serial.println("Transmitting TID flash command");
+  ComDef::CommandPacket packet;
+
+  packet.header.packetType = ComDef::COMMAND;
+  packet.header.sequence = RadioHandler::nextSequence(); 
+
+  packet.targetId = (uint8_t)0;
+  packet.command = ComDef::FLASH_TID;
+
+  RadioHandler::sendPacket(packet);
 }
 
 void assignMissingTIDsCallback(RadioHandler::ResponseCode responseCode){
@@ -183,10 +215,10 @@ void assignMissingTIDsStateMachine(){
         assignMissingTIDsContext.awaitingAck = true;
         
         ComDef::TIDAssignmentPacket assignmentPacket;
-        assignmentPacket.header.packetType;
-        assignmentPacket.header.sequence = ++currentSequence;
+        assignmentPacket.header.packetType = ComDef::TID_ASSIGN;
+        assignmentPacket.header.sequence = RadioHandler::nextSequence(); 
         assignmentPacket.UID = receiver.UID;
-        assignmentPacket.TransientID = (uint8_t)i;
+        assignmentPacket.TransientID = (uint8_t)(i + 1);
         
         RadioHandler::sendTillAck(assignmentPacket, -1, 10000, assignMissingTIDsCallback);
       }

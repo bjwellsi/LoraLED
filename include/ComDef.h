@@ -7,7 +7,8 @@ namespace ComDef{
     STOP = 0,
     TRANSMIT_UID = 1, 
     SOLID_COLOR = 20,
-    FLASH = 21
+    FLASH = 21,
+    FLASH_TID = 22
   };
 
   enum PacketType : uint8_t {
