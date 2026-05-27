@@ -1,13 +1,12 @@
 #include <FastLED.h>
 #include <Preferences.h>
 #include <Arduino.h>
-#include "../LedDriver.h"
-#include "../AtomicOps.h"
-#include "../AnimationTasks.h"
-#include "../TaskHandling.h"
-#include "../ComDef.h"
-#include "../RadioHandler.h"
-#include "ReceiverStateManagement.h"
+#include "LedDriver.h"
+#include "AtomicOps.h"
+#include "AnimationTasks.h"
+#include "TaskHandling.h"
+#include "ComDef.h"
+#include "RadioHandler.h"
 
 Preferences prefs;
 
@@ -25,10 +24,24 @@ volatile bool stopAnimation = false;
 volatile bool animationExited = false;
 volatile bool radioReceivedFlag = true;
 uint16_t currentSequence;
-SX1262 radio;
-const RadioHandler::RadioCallBacks radioCallbacks = {.onTIDAssignment = processTIDAssignmentPacket, .onCommand = processCommand, onUIDReport = nullptr};
+
+SX1262 radio = nullptr;
+RadioHandler::RadioCallbacks radioCallbacks;
+
 RadioHandler::RadioOpContext radioOpContext;
 RadioHandler::RadioState radioState;
+
+
+uint8_t loadTubeCount();
+void processTIDAssignmentPacket(ComDef::TIDAssignmentPacket tidPacket);
+void processCommand(ComDef::CommandPacket packet);
+void reportUID(int maxRetries, int timeout);
+void clearMemory();
+uint64_t getUID();
+void saveTransientID(uint8_t id);
+uint8_t loadTransientID();
+void saveTubeCount(uint8_t count);
+uint8_t loadTubeCount();
 
 void setup() {
   Serial.begin(115200);
@@ -56,6 +69,9 @@ void setup() {
   RadioHandler::initRadio();
   TaskHandling::startAnimation(&AnimationTasks::bootAnimationTask, nullptr);
 
+  radioCallbacks.onTIDAssignment = processTIDAssignmentPacket;
+  radioCallbacks.onCommand = processCommand;
+  
   Serial.println("Receiver ready");
 }
 
@@ -68,7 +84,7 @@ void processTIDAssignmentPacket(ComDef::TIDAssignmentPacket tidPacket) {
     //for now we'll just let this be destructive. 
     //all it's gonna do is as long as the uid matches, assign the tid and ack
     saveTransientID(tidPacket.TransientID);
-    RadioHandler::sendAck(SUCCESS, tidPacket.header.sequence);
+    RadioHandler::sendAck(ComDef::SUCCESS, tidPacket.header.sequence);
   }
 }
 
@@ -86,26 +102,20 @@ void processCommand(ComDef::CommandPacket packet){
     //color is defined in p1,2,3
   //2 - flash 
     //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
-  if (packet.command == STOP) {
+  if (packet.command == ComDef::STOP) {
     //stop command
-    //stop init flow
-    activeOps = IDLE;
     AtomicOps::setColorAnimation(CRGB::Black);
   }
-  else if(packet.command == REPORT_UID){
+  else if(packet.command == ComDef::UID_REPORT){
     delay(1000);
     //TODO hardcoded timeouts
     reportUID(-1, 10000);
   }
-  else if (packet.command == INIT) {
-    activeOps = INIT;
-    initializeReceiver();
-  }
-  else if (packet.command == SOLID_COLOR) {
+  else if (packet.command == ComDef::SOLID_COLOR) {
     CRGB color = {packet.p1, packet.p2, packet.p3};
     AtomicOps::setColorAnimation(color);
   }
-  else if (packet.command == 21){
+  else if (packet.command == ComDef::FLASH){
     CRGB color = {packet.p1, packet.p2, packet.p3};
     uint8_t count = packet.p4; 
     uint16_t offTime = ((uint16_t)packet.p5 << 8) | packet.p6;
@@ -122,15 +132,12 @@ void processCommand(ComDef::CommandPacket packet){
 }
 
 void reportUID(int maxRetries, int timeout){
-  UIDReportPacket = p {
-    .header = {
-      .sequence = RadioHandler::nextSequence(),
-      packetType = UID_REPORT;
-    }
-    .UID = getUID();
-  };
+  ComDef::UIDReportPacket p;
+  p.header.sequence = RadioHandler::nextSequence();
+  p.header.packetType = ComDef::UID_REPORT;
+  p.UID = getUID();
 
-  RadioHandler::sendTillAck(p, maxRetries, timeout);
+  RadioHandler::sendTillAck(p, maxRetries, timeout, nullptr);
 }
 
 uint64_t getUID(){

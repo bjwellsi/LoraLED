@@ -8,7 +8,7 @@ namespace ComDef{
     TRANSMIT_UID = 1, 
     SOLID_COLOR = 20,
     FLASH = 21
-  }
+  };
 
   enum PacketType : uint8_t {
     INVALID = 0,
@@ -44,26 +44,27 @@ namespace ComDef{
   };
   static_assert(sizeof(Ack) == 4);
 
-  struct __attribute__((packet)) UIDReportPacket {
+  struct __attribute__((packed)) UIDReportPacket {
     PacketHeader header;
     uint64_t UID = 0;
 
     void reset(){
       *this = UIDReportPacket{};
+    }
   };
+  static_assert(sizeof(UIDReportPacket) == 11);
 
-  static_asset(sizeof(UIDReportPacket) == 4);
-
-  struct __attrubte__((packed)) TIDAssignmentPacket {
+  struct __attribute__((packed)) TIDAssignmentPacket {
     PacketHeader header;
     uint64_t UID = 0;
     uint8_t TransientID = 0;
 
     void reset(){
-      *this = TIDAssignmentPacket;
+      *this = TIDAssignmentPacket{};
+    }
   };
 
-  static_assert(sizeof(TIDAssignmentPacket) == 8);
+  static_assert(sizeof(TIDAssignmentPacket) == 12);
 
   struct __attribute__((packed)) CommandPacket {
     PacketHeader header;

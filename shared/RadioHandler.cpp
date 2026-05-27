@@ -1,10 +1,10 @@
 #include "RadioHandler.h"
 
 extern SX1262 radio;
-extern volatile bool receivedFlag;
-extern volatile RadioState radioState;
-extern RadioOpContext radioOpContext;
-extern RadioCallBacks radioCallbacks;
+extern volatile bool radioReceivedFlag;
+extern volatile RadioHandler::RadioState radioState;
+extern RadioHandler::RadioOpContext radioOpContext;
+extern RadioHandler::RadioCallbacks radioCallbacks;
 extern uint16_t currentSequence;
 
 namespace RadioHandler{
@@ -16,82 +16,87 @@ namespace RadioHandler{
     }
   }
 
-  template <typename T>
-  void sendTillAck(const T& packet, int maxRetries, int timeout, void (*)(ResponseCode responseCode) callback){
-    //start the state machine
-    if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
-    radioOpContext.reset();
-    radioOpContext.waitStart = 0;
-    radioOpContext.packet = &packet;
-    radioOpContext.timeoutEndTime = millis() + timeout;
-    radioOpContext.maxRetries = maxRetries;
-    radioOpContext.activeSM = sendTillAckStateMachine;
-    radioOpContext.opActive = true;
-    radioState = OP_ACTIVE; 
-    radioOpContext.responseCode = OP_ACTIVE;
-    radioOpContext.onCompleteFunction = callback;
-  }
-
-  static void sendTillAckStateMachine(){
-    if(millis() > radioOpContext.timeouEndTime || (radioOpContext.maxRetries >= 0 && radioOpContext.currentRetryCount > radioOpContext.maxRetries)){
-      radioOpContext.processStop(TIMEOUT);
+  void sendTillAckStateMachine(){
+    if(millis() > radioOpContext.timeoutEndTime || (radioOpContext.maxRetries >= 0 && radioOpContext.currentRetryCount > radioOpContext.maxRetries)){
+      processStop(TIMEOUT);
     }
-    else if(radioOpContext.ackStatus != NO_RESPONSE){
-      if(radioOpContext.ackStatus == SUCCESS){
-        radioOpContext.processStop(ACK_RECEIVED);
+    else if(radioOpContext.ackStatus != ComDef::NO_RESPONSE){
+      if(radioOpContext.ackStatus == ComDef::SUCCESS){
+        processStop(ACK_RECEIVED);
       }
       else{
-        radioOpContext.processStop(ACK_ERROR);
+        processStop(ACK_ERROR);
       }
     }
     else{
       if(millis() > radioOpContext.waitStart + random(20,200)){
         //send again
-        sendPacket(radioOpContext.packet);
-        radioOpContext.retryCount++;
+        sendPacketBytes(radioOpContext.packetBytes, radioOpContext.packetSize);
+        radioOpContext.currentRetryCount++;
         radioOpContext.waitStart = millis();
       }
     }
   }
 
-  template <typename T>
-  void sendNTimes(const T& packet, int sendCount, int timeout){
+  void sendTillAckBytes(const uint8_t* bytes, size_t size, int sendCount, int timeout, uint16_t packetSequence, void (*callback)(ResponseCode responseCode)){
     //start the state machine
     if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
     radioOpContext.reset();
     radioOpContext.waitStart = 0;
-    radioOpContext.packet = &packet;
-    radioOpContext.maxRetries = sendCount;
-    radioOpContext.retryCount = 0;
+
+    memcpy(radioOpContext.packetBytes, bytes, size);
+    radioOpContext.packetSize = size;
+    radioOpContext.packetSequence = packetSequence;
+
     radioOpContext.timeoutEndTime = millis() + timeout;
-    radioOpContext.activeSM = sendNTimesStateMachine;
-    radioState = OP_ACTIVE;
+    radioOpContext.maxRetries = sendCount;
+    radioOpContext.activeSM = sendTillAckStateMachine;
     radioOpContext.opActive = true;
-    radioOpContext.responseCode = OP_ACTIVE;
+    radioState = OP_ACTIVE; 
+    radioOpContext.responseCode = OPERATION_ACTIVE;
+    radioOpContext.onCompleteFunction = callback;
   }
 
-  static void sendNTimesStateMachine(){
+  void sendNTimesStateMachine(){
     if(millis() > radioOpContext.timeoutEndTime){
       //exit err
-      radioOpContext.processStop(TIMOUT);
+      processStop(TIMEOUT);
     }
-    else if(radioOpContext.retryCount >= radioOpContext.maxRetries){
+    else if(radioOpContext.currentRetryCount >= radioOpContext.maxRetries){
       //exit success
-      radioOpContext.processStop(SENT_NO_ACK);
+      processStop(SENT_NO_ACK);
     }
     else {
       if(millis() > radioOpContext.waitStart + random(20, 200)){
         //send again
-        sendPacket(radioOpContext.packet);
-        radioOpContext.retryCount++;
+        sendPacketBytes(radioOpContext.packetBytes, radioOpContext.packetSize);
+        radioOpContext.currentRetryCount++;
         radioOpContext.waitStart = millis();
       }
     }
   }
 
-  template <typename T>
-  bool sendPacket(const T& packet){
-    int state = radio.transmit((uint8_t*)&packet, sizeof(T));
+  void sendNTimesBytes(const uint8_t* bytes, size_t size, int sendCount, int timeout, uint16_t packetSequence){
+    //start the state machine
+    if(timeout < 1) timeout = 100000; //gotta have a max timeout of some kind
+    radioOpContext.reset();
+    radioOpContext.waitStart = 0;
+
+    memcpy(radioOpContext.packetBytes, bytes, size);
+    radioOpContext.packetSize = size;
+    radioOpContext.packetSequence = packetSequence;
+
+    radioOpContext.maxRetries = sendCount;
+    radioOpContext.currentRetryCount = 0;
+    radioOpContext.timeoutEndTime = millis() + timeout;
+    radioOpContext.activeSM = sendNTimesStateMachine;
+    radioState = OP_ACTIVE;
+    radioOpContext.opActive = true;
+    radioOpContext.responseCode = OPERATION_ACTIVE;
+  }
+
+  bool sendPacketBytes(const uint8_t* bytes, size_t size){
+    int state = radio.transmit(bytes, size);
 
     radio.startReceive();
 
@@ -99,16 +104,20 @@ namespace RadioHandler{
   }
 
   void sendAck(ComDef::AckStatus status, uint16_t sequence){
-    ComDef::Ack ack = {.header = {.packetType = ACK, .sequence = sequence} .status = status}
-    sendPacket(ack);
+    ComDef::Ack ack;
+    ack.header.packetType = ComDef::ACK;
+    ack.header.sequence = sequence;
+    ack.status = status;
+    
+    sendPacketBytes((const uint8_t*)&ack, sizeof(ack));  
   }
-  
+
   void initRadio(){
     // SX1262 pins for Heltec V3
     // Module(NSS, DIO1, RESET, BUSY)
-    SX1262 radio = new Module(8, 14, 12, 13);
+    radio = new Module(8, 14, 12, 13);
   
-    receivedFlag = false;
+    radioReceivedFlag = false;
     currentSequence = 0;
     int state = radio.begin(LORA_FREQ);
   
@@ -147,7 +156,7 @@ namespace RadioHandler{
     radioState = LISTENING;
     radioOpContext.opActive = false;
     radioOpContext.responseCode = endResponseCode;
-    radioOpContext.onCompleteFunction(radioOpContext.ResponseCode);
+    radioOpContext.onCompleteFunction(radioOpContext.responseCode);
   }
 
   void interrupt(){
@@ -157,26 +166,26 @@ namespace RadioHandler{
   void processRawPacket(uint8_t buf[64], size_t len){
     ComDef::PacketHeader* header = (ComDef::PacketHeader*)buf; 
 
-    if(header->packetType == UID_REPORT){
+    if(header->packetType == ComDef::UID_REPORT){
       if(len != sizeof(ComDef::UIDReportPacket) || !radioCallbacks.onUIDReport) return;
       ComDef::UIDReportPacket* p = (ComDef::UIDReportPacket*)buf;
       radioCallbacks.onUIDReport(*p);
-    }else if(header->packetType == TID_ASSIGN){
+    }else if(header->packetType == ComDef::TID_ASSIGN){
       if(len != sizeof(ComDef::TIDAssignmentPacket) || !radioCallbacks.onTIDAssignment) return;
       ComDef::TIDAssignmentPacket* p = (ComDef::TIDAssignmentPacket*)buf;
       radioCallbacks.onTIDAssignment(*p);
-    }else if(header->packetType == COMMAND){
+    }else if(header->packetType == ComDef::COMMAND){
       if(len != sizeof(ComDef::CommandPacket) || !radioCallbacks.onCommand) return;
       ComDef::CommandPacket* p = (ComDef::CommandPacket*)buf;
       radioCallbacks.onCommand(*p);
-    }else if(header->packetType == ACK){
+    }else if(header->packetType == ComDef::ACK){
       //Validate the ack
       ComDef::Ack* p = (ComDef::Ack*)buf;
-      if(radioOpContext.packet) {
-        uint16_t sequence = radioOpContext.packet->header.sequence;
-        if(radioOpContext.opActive && radioOpContext.ackStatus == NO_RESPONSE && p.header.sequence == sequence){
+      if(radioOpContext.packetSequence > 0) {
+        uint16_t sequence = radioOpContext.packetSequence;
+        if(radioOpContext.opActive && radioOpContext.ackStatus == ComDef::NO_RESPONSE && p->header.sequence == sequence){
           //if ack is valid for current context, store its status
-          radioOpContext.ackStatus = p.status;
+          radioOpContext.ackStatus = (ComDef::AckStatus)p->status;
         }
       }
     }

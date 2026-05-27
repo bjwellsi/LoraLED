@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ComDef.h"
+#include "ComDef.h"
 
 namespace SenderStateManagement{
   enum ActiveOp {
@@ -20,6 +20,7 @@ namespace SenderStateManagement{
     
     void reset(){
       *this = AssignMissingTIDsContext{};
+    }
   };
 
   struct Receiver{
