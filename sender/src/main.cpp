@@ -3,6 +3,9 @@
 #include "ComDef.h"
 #include "RadioHandler.h"
 #include "SenderStateManagement.h"
+#include "CLIListener.h"
+#include "RadioDTO.h"
+#include "RadioMessageTransport.h"
 
 volatile bool radioReceivedFlag = true;
 SX1262 radio = nullptr;
@@ -15,6 +18,8 @@ uint8_t receiverCount;
 SenderStateManagement::Receiver receivers[MAX_RECEIVERS];
 SenderStateManagement::AssignMissingTIDsContext assignMissingTIDsContext;
 SenderStateManagement::ActiveOp activeOp;
+CLIListener cli;
+RadioMessageTransport messageTransporter;
 
 uint16_t currentSequence;
 
@@ -40,14 +45,14 @@ void setup() {
 }
 
 void loop() {
-  String cli = checkCli();
-  if (cli != "") {
-    cli.trim();
+  cli.tick();
+  if(cli.messageWaiting()){
+    String cliMessage = cli.retrieveMessage();
 
-    handleCliCommand(cli);
+    Serial.print("Handling command: ");
+    Serial.println(cliMessage);
 
-    Serial.print("Handled command: ");
-    Serial.println(cli);
+    handleCliCommand(cliMessage);
   }
   //check radio
   RadioHandler::tickRadio();
@@ -58,35 +63,10 @@ void loop() {
   }
 }
 
-String checkCli() {
-  static String buffer = "";
-
-  if (Serial.available() <= 0) {
-    return "";
-  }
-
-  char c = Serial.read();
-
-  if (c == '\r') {
-    return ""; // ignore carriage return from CRLF
-  }
-
-  if (c == '\n') {
-    String line = buffer;
-    buffer = "";
-    return line;
-  }
-
-  buffer += c;
-  return "";
-}
-
 void handleCliCommand(String line){
   if (line.startsWith("off ")){
-    ComDef::CommandPacket packet;
-
-    packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = RadioHandler::nextSequence(); 
+    RadioDTO::Message message;
+    message.stop = {};
 
     int targetId;
 
@@ -98,10 +78,11 @@ void handleCliCommand(String line){
       return;
     }
 
-    packet.targetId = (uint8_t)targetId;
-    packet.command = ComDef::STOP;
+    //TODO who is in charge of sequence assignment? 
+    message.sequenceID = 1;
+    message.stop.target = targetId;
 
-    RadioHandler::sendPacket(packet);
+    messageTransporter.sendMessage(message, false, -1, 1000);
   }
   else if (line.startsWith("solid ")){
     ComDef::CommandPacket packet;
