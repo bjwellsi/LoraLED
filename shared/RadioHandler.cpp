@@ -103,7 +103,7 @@ namespace RadioHandler{
     return state == RADIOLIB_ERR_NONE;
   }
 
-  void sendAck(ComDef::AckStatus status, uint16_t sequence){
+  void sendAck(ComDef::AckResponseCode status, uint16_t sequence){
     ComDef::Ack ack;
     ack.header.packetType = ComDef::ACK;
     ack.header.sequence = sequence;
@@ -187,7 +187,7 @@ namespace RadioHandler{
         uint16_t sequence = radioOpContext.packetSequence;
         if(radioOpContext.opActive && radioOpContext.ackStatus == ComDef::NO_RESPONSE && p->header.sequence == sequence){
           //if ack is valid for current context, store its status
-          radioOpContext.ackStatus = (ComDef::AckStatus)p->status;
+          radioOpContext.ackStatus = (ComDef::AckResponseCode)p->status;
         }
       }
     }

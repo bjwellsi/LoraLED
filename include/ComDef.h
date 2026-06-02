@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#define MAX_PACKET_SIZE 64
+
 namespace ComDef{
   enum Command : uint8_t {
     STOP = 0,
@@ -19,21 +21,25 @@ namespace ComDef{
     TID_ASSIGN = 4
   };
 
-  enum AckStatus : uint8_t {
+  enum AckResponseCode : uint8_t {
     NO_RESPONSE = 0,
-    SUCCESS = 1,
-    ERROR = 2
+    INVALID = 1, 
+    NOT_STARTED = 2, 
+    IN_PROGRESS = 3,
+    SUCCESS = 4,
+    ERROR = 5
   };
 
   struct __attribute__((packed)) PacketHeader {
     uint8_t packetType = INVALID;
     uint16_t sequence = 0;
+    uint8_t expectsAck = 0;
 
     void reset(){
       *this = PacketHeader{};
     }
   };
-  static_assert(sizeof(PacketHeader) == 3);
+  static_assert(sizeof(PacketHeader) == 4);
   
   struct __attribute__((packed)) Ack {
     PacketHeader header;
@@ -43,7 +49,7 @@ namespace ComDef{
       *this = Ack{};
     }
   };
-  static_assert(sizeof(Ack) == 4);
+  static_assert(sizeof(Ack) == 5);
 
   struct __attribute__((packed)) UIDReportPacket {
     PacketHeader header;
@@ -53,7 +59,7 @@ namespace ComDef{
       *this = UIDReportPacket{};
     }
   };
-  static_assert(sizeof(UIDReportPacket) == 11);
+  static_assert(sizeof(UIDReportPacket) == 12);
 
   struct __attribute__((packed)) TIDAssignmentPacket {
     PacketHeader header;
@@ -65,7 +71,7 @@ namespace ComDef{
     }
   };
 
-  static_assert(sizeof(TIDAssignmentPacket) == 12);
+  static_assert(sizeof(TIDAssignmentPacket) == 13);
 
   struct __attribute__((packed)) CommandPacket {
     PacketHeader header;
@@ -91,5 +97,10 @@ namespace ComDef{
     }
   };
 
-  static_assert(sizeof(CommandPacket) == 19);
+  static_assert(sizeof(CommandPacket) == 20);
+
+  struct PacketBytes{
+    uint8_t* data; 
+    uint8_t length = 0;
+  };
 }

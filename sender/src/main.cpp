@@ -5,7 +5,7 @@
 #include "SenderStateManagement.h"
 #include "CLIListener.h"
 #include "RadioDTO.h"
-#include "RadioMessageTransport.h"
+#include "MessageTransport.h"
 
 volatile bool radioReceivedFlag = true;
 SX1262 radio = nullptr;
@@ -19,7 +19,7 @@ SenderStateManagement::Receiver receivers[MAX_RECEIVERS];
 SenderStateManagement::AssignMissingTIDsContext assignMissingTIDsContext;
 SenderStateManagement::ActiveOp activeOp;
 CLIListener cli;
-RadioMessageTransport messageTransporter;
+MessageTransport messageTransport;
 
 uint16_t currentSequence;
 
@@ -78,11 +78,10 @@ void handleCliCommand(String line){
       return;
     }
 
-    //TODO who is in charge of sequence assignment? 
-    message.sequenceID = 1;
+
     message.stop.target = targetId;
 
-    messageTransporter.sendMessage(message, false, -1, 1000);
+    messageTransport.sendMessage(message, -1, 1000);
   }
   else if (line.startsWith("solid ")){
     ComDef::CommandPacket packet;

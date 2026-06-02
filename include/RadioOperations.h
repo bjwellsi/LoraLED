@@ -19,6 +19,8 @@ class RadioOperations{
 
         static void receivedPacket();
 
+        bool messageWaiting();
+
     private:
         static volatile bool radioReceivedFlag;
 

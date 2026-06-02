@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <FastLED.h>
+#include "ComDef.h"
 
 namespace RadioDTO {
     enum MessageType{
@@ -10,16 +11,11 @@ namespace RadioDTO {
         SOLID_COLOR,
         FLASH_COLOR,
         STOP_COMMAND,
-        UID_REPORT
+        TID_ASSIGN,
+        UID_REPORT,
+        UID_CHIRP_COMMAND
     };
 
-    enum AckResponseCode{
-        INVALID,
-        NOT_STARTED,
-        IN_PROGRESS,
-        SUCCESS,
-        ERROR
-    };
 
     struct UIDReport{
         uint64_t UID = 0;
@@ -38,23 +34,37 @@ namespace RadioDTO {
     struct FlashColor{
         uint8_t target = 0;
         CRGB color = 0x000000;
+        uint8_t count;
+        uint16_t onTime;
+        uint16_t offTime;
     };
 
     struct StopCommand{
         uint8_t target = 0;
     };
 
+    struct UIDChirpCommand{
+        uint8_t target = 0;
+    };
+
+    struct Ack{
+        uint16_t sequenceID = 0;
+        ComDef::AckResponseCode responseCode = ComDef::AckResponseCode::INVALID;
+    };
+
     struct Message{
         MessageType messageType = MessageType::INVALID;
         uint16_t sequenceID = 0;
         bool expectsAck = false;
-        AckResponseCode responseCode = NOT_STARTED;
+        ComDef::AckResponseCode responseCode = ComDef::AckResponseCode::NOT_STARTED;
         union {
             SolidColor solidColor;
             FlashColor flashColor;
             StopCommand stop;
             UIDReport uidReport;
             TIDAssign tidAssign;
+            Ack ack;
+            UIDChirpCommand uidChirpCommand;
         };
 
         Message(){

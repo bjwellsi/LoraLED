@@ -38,7 +38,7 @@ namespace RadioHandler{
     uint8_t packetBytes[64];
     size_t packetSize = 0;
     uint16_t packetSequence = 0;
-    ComDef::AckStatus ackStatus = ComDef::NO_RESPONSE;
+    ComDef::AckResponseCode ackStatus = ComDef::NO_RESPONSE;
     int maxRetries = -1;
     int currentRetryCount = -1;
     int timeoutEndTime = -1;
@@ -98,7 +98,7 @@ namespace RadioHandler{
     return sendPacketBytes((const uint8_t*)&packet, sizeof(packet));
   }
 
-  void sendAck(ComDef::AckStatus status, uint16_t sequence);
+  void sendAck(ComDef::AckResponseCode status, uint16_t sequence);
 
   void initRadio();
 
