@@ -46,6 +46,7 @@ void setup() {
 
 void loop() {
   cli.tick();
+  messageTransport.tick();
   if(cli.messageWaiting()){
     String cliMessage = cli.retrieveMessage();
 
@@ -55,7 +56,6 @@ void loop() {
     handleCliCommand(cliMessage);
   }
   //check radio
-  RadioHandler::tickRadio();
   switch (activeOp){
     case SenderStateManagement::ASSIGNING_TIDS: 
       assignMissingTIDsStateMachine();

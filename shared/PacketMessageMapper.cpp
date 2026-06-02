@@ -6,32 +6,25 @@ namespace PacketMessageMapper {
         //use that to generate a message         
         RadioDTO::Message ret;
         ComDef::PacketHeader* header = (ComDef::PacketHeader*)packet.data;
+        ret.expectsAck = header->expectsAck;
+        ret.sequenceID = header->sequence;
+        ret.responseCode = ComDef::AckResponseCode::NOT_STARTED;
         switch (header -> packetType){
             case ComDef::PacketType::UID_REPORT:
                 ComDef::UIDReportPacket* uid = (ComDef::UIDReportPacket*)packet.data;
                 ret.messageType = RadioDTO::MessageType::UID_REPORT;
-                ret.expectsAck = header->expectsAck;
-                ret.sequenceID = header->sequence;
-                ret.responseCode = ComDef::AckResponseCode::NOT_STARTED;
 
                 ret.uidReport.UID = uid->UID;
                 break;
             case ComDef::PacketType::ACK:
                 ComDef::Ack* ack = (ComDef::Ack*)packet.data;
                 ret.messageType = RadioDTO::MessageType::ACK;
-                ret.expectsAck = header->expectsAck;
-                ret.sequenceID = header->sequence;
-                ret.responseCode = ComDef::AckResponseCode::NOT_STARTED;
 
                 ret.ack.responseCode = (ComDef::AckResponseCode)ack->status;
                 ret.ack.sequenceID = ack->header.sequence;
                 break;
             case ComDef::PacketType::COMMAND:
                 ComDef::CommandPacket* cmd = (ComDef::CommandPacket*)packet.data;
-                
-                ret.expectsAck = header->expectsAck;
-                ret.sequenceID = header->sequence;
-                ret.responseCode = ComDef::AckResponseCode::NOT_STARTED;
 
                 switch (cmd -> command){
                     case ComDef::Command::STOP:
@@ -61,9 +54,6 @@ namespace PacketMessageMapper {
             case ComDef::PacketType::TID_ASSIGN:
                 ComDef::TIDAssignmentPacket* tid = (ComDef::TIDAssignmentPacket*)packet.data;
                 ret.messageType = RadioDTO::MessageType::TID_ASSIGN;
-                ret.expectsAck = header->expectsAck;
-                ret.sequenceID = header->sequence;
-                ret.responseCode = ComDef::AckResponseCode::NOT_STARTED;
 
                 ret.tidAssign.TID = tid->TransientID;
                 ret.tidAssign.UID = tid->UID;
