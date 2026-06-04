@@ -6,7 +6,7 @@
 #include "AnimationTasks.h"
 #include "TaskHandling.h"
 #include "ComDef.h"
-#include "RadioHandler.h"
+#include "MessageTransport.h"
 
 Preferences prefs;
 
@@ -22,26 +22,16 @@ int totalLEDs;
 TaskHandle_t animationTaskHandle = nullptr;
 volatile bool stopAnimation = false;
 volatile bool animationExited = false;
-volatile bool radioReceivedFlag = true;
-uint16_t currentSequence;
-
-SX1262 radio = nullptr;
-RadioHandler::RadioCallbacks radioCallbacks;
-
-RadioHandler::RadioOpContext radioOpContext;
-RadioHandler::RadioState radioState;
-
+MessageTransport messageTransport;
 
 uint8_t loadTubeCount();
-void processTIDAssignmentPacket(ComDef::TIDAssignmentPacket tidPacket);
-void processCommand(ComDef::CommandPacket packet);
-void reportUID(int maxRetries, int timeout);
 void clearMemory();
 uint64_t getUID();
 void saveTransientID(uint8_t id);
 uint8_t loadTransientID();
 void saveTubeCount(uint8_t count);
 uint8_t loadTubeCount();
+void handleMessage(RadioDTO::Message *incoming);
 
 void setup() {
   Serial.begin(115200);
@@ -66,95 +56,67 @@ void setup() {
   FastLED.setBrightness(100);
   FastLED.clear(true);
   
-  RadioHandler::initRadio();
+  messageTransport.assignTID(TransientID);
+  messageTransport.assignUID(getUID());
   TaskHandling::startAnimation(&AnimationTasks::bootAnimationTask, nullptr);
-
-  radioCallbacks.onTIDAssignment = processTIDAssignmentPacket;
-  radioCallbacks.onCommand = processCommand;
   
   delay(1000);
   Serial.println("Receiver ready");
 }
 
 void loop() {
-  RadioHandler::tickRadio();
-}
+  messageTransport.tick();
+  if(messageTransport.messageWaiting()){
+    RadioDTO::Message *message = messageTransport.nextMessage();
 
-void processTIDAssignmentPacket(ComDef::TIDAssignmentPacket tidPacket) {
-  if(getUID() == tidPacket.UID){
-    //for now we'll just let this be destructive. 
-    //all it's gonna do is as long as the uid matches, assign the tid and ack
-    saveTransientID(tidPacket.TransientID);
-    RadioHandler::sendAck(ComDef::SUCCESS, tidPacket.header.sequence);
-  }
-}
-
-void processCommand(ComDef::CommandPacket packet){
-  //parse out the bytes
-  if(packet.targetId != 0 && packet.targetId != TransientID)
-  {
-    //command isn't for this reciever
-    return;
-  }
-  Serial.print("Received command ");
-  Serial.println(packet.command);
-
-  //command def for now
-  //0 - off
-  //1 - static
-    //color is defined in p1,2,3
-  //2 - flash 
-    //color is defined in p1,2,3, count is 4, off time is p5,6 (decomposed 16bit val. high byte first), on time is p7, 8
-  if (packet.command == ComDef::STOP) {
-    //stop command
-    AtomicOps::setColorAnimation(CRGB::Black);
-  }
-  else if(packet.command == ComDef::UID_REPORT){
-    delay(1000);
-    TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
-
-    //TODO hardcoded timeouts
-    reportUID(-1, 10000);
-  }
-  else if (packet.command == ComDef::FLASH_TID){
-    AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
-      .count = int(TransientID),
-      .timeOn = 150,
-      .timeOff = 150,
-      .color =  CRGB::Green
-    };
-    Serial.println("Starting flash task");
-    TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
-  }
-  else if (packet.command == ComDef::SOLID_COLOR) {
-    CRGB color = {packet.p1, packet.p2, packet.p3};
-    AtomicOps::setColorAnimation(color);
-  }
-  else if (packet.command == ComDef::FLASH){
-    CRGB color = {packet.p1, packet.p2, packet.p3};
-    uint8_t count = packet.p4; 
-    uint16_t offTime = ((uint16_t)packet.p5 << 8) | packet.p6;
-    uint16_t onTime = ((uint16_t)packet.p7 << 8) | packet.p8;
-    AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
-      .count = int(count),
-      .timeOn = int(onTime),
-      .timeOff = int(offTime),
-      .color = color
-    };
-    Serial.println("Starting flash task");
-    TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
+    Serial.print("Handling message: ");
+    Serial.print(message->sequenceID);
+    Serial.print(" from ");
+    Serial.println(message->senderId.idKind == ComDef::IDKind::TID ? message->senderId.TID : message->senderId.UID);
+    handleMessage(message);
   }
 }
 
-void reportUID(int maxRetries, int timeout){
-  ComDef::UIDReportPacket p;
-  p.header.sequence = RadioHandler::nextSequence();    
-  p.header.packetType = ComDef::UID_REPORT;
-  p.UID = getUID();
-  Serial.print("UID ");
-  Serial.println(p.UID);
-  Serial.println("Sending UID");
-  RadioHandler::sendTillAck(p, maxRetries, timeout, nullptr);
+void handleMessage(RadioDTO::Message *incoming){
+  //TODO
+  switch (incoming->messageType) {
+    case RadioDTO::MessageType::STOP_COMMAND:
+      AtomicOps::setColorAnimation(CRGB::Black);
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    break;
+    case RadioDTO::MessageType::UID_CHIRP_COMMAND:
+      delay(20);
+      TaskHandling::startAnimation(&AnimationTasks::idAssignmentAnimationTask, nullptr);
+      RadioDTO::Message uidReport;
+      uidReport.expectsAck = true;
+      uidReport.senderId.idKind = ComDef::IDKind::UID;
+      uidReport.senderId.UID = getUID();
+      uidReport.targetId = incoming->senderId;
+
+      messageTransport.sendMessage(uidReport, -1, 3000);
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    break;
+    case RadioDTO::MessageType::FLASH_COLOR:
+      AnimationTasks::FlashConfig* flashConf = new AnimationTasks::FlashConfig{
+        .count = incoming->flashColor.count,
+        .timeOn = incoming->flashColor.onTime,
+        .timeOff = incoming->flashColor.offTime,
+        .color = incoming->flashColor.color
+      };
+
+      Serial.println("Starting flash task");
+      TaskHandling::startAnimation(&AnimationTasks::flashAnimationTask, flashConf);
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    break;
+    case RadioDTO::MessageType::SOLID_COLOR:
+      AtomicOps::setColorAnimation(incoming->solidColor.color);
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    break;
+    case RadioDTO::MessageType::TID_ASSIGN:
+      saveTransientID(incoming -> tidAssign.newTID);
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    break;
+  }
 }
 
 uint64_t getUID(){

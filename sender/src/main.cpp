@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 #include "ComDef.h"
-#include "RadioHandler.h"
 #include "SenderStateManagement.h"
 #include "CLIListener.h"
 #include "RadioDTO.h"
