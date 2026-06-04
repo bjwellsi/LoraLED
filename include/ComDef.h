@@ -30,39 +30,49 @@ namespace ComDef{
     ERROR = 5
   };
 
+  enum IDKind : uint8_t {
+    TID = 0,
+    UID = 0
+  };
+
+  template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) PacketHeader {
     uint8_t packetType = INVALID;
     uint16_t sequence = 0;
     uint8_t expectsAck = 0;
+    uint8_t idKind = 0;
+    SenderIdT senderId;
+    ReceiverIdT receiverId;
 
     void reset(){
       *this = PacketHeader{};
     }
   };
-  static_assert(sizeof(PacketHeader) == 4);
   
+  template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) Ack {
-    PacketHeader header;
+    PacketHeader<SenderIdT, ReceiverIdT> header;
     uint8_t status = 0;
 
     void reset(){
       *this = Ack{};
     }
   };
-  static_assert(sizeof(Ack) == 5);
 
+  template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) UIDReportPacket {
-    PacketHeader header;
+    PacketHeader<SenderIdT, ReceiverIdT> header;
+    uint8_t target = 0;
     uint64_t UID = 0;
 
     void reset(){
       *this = UIDReportPacket{};
     }
   };
-  static_assert(sizeof(UIDReportPacket) == 12);
 
+  template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) TIDAssignmentPacket {
-    PacketHeader header;
+    PacketHeader<SenderIdT, ReceiverIdT> header;
     uint64_t UID = 0;
     uint8_t TransientID = 0;
 
@@ -71,10 +81,9 @@ namespace ComDef{
     }
   };
 
-  static_assert(sizeof(TIDAssignmentPacket) == 13);
-
+  template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) CommandPacket {
-    PacketHeader header;
+    PacketHeader<SenderIdT, ReceiverIdT> header;
     uint8_t targetId = 0;
     uint8_t command = 0;
     uint8_t p1 = 0;
@@ -97,7 +106,6 @@ namespace ComDef{
     }
   };
 
-  static_assert(sizeof(CommandPacket) == 20);
 
   struct PacketBytes{
     uint8_t* data; 

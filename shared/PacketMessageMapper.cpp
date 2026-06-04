@@ -15,6 +15,7 @@ namespace PacketMessageMapper {
                 ret.messageType = RadioDTO::MessageType::UID_REPORT;
 
                 ret.uidReport.UID = uid->UID;
+                ret.targetTID = uid->target;
                 break;
             case ComDef::PacketType::ACK:
                 ComDef::Ack* ack = (ComDef::Ack*)packet.data;
@@ -22,6 +23,7 @@ namespace PacketMessageMapper {
 
                 ret.ack.responseCode = (ComDef::AckResponseCode)ack->status;
                 ret.ack.sequenceID = ack->header.sequence;
+                ret.targetTID = 
                 break;
             case ComDef::PacketType::COMMAND:
                 ComDef::CommandPacket* cmd = (ComDef::CommandPacket*)packet.data;
@@ -29,20 +31,20 @@ namespace PacketMessageMapper {
                 switch (cmd -> command){
                     case ComDef::Command::STOP:
                         ret.messageType = RadioDTO::MessageType::STOP_COMMAND;
-                        ret.stop.target = cmd->targetId;
+                        ret.targetTID = cmd->targetId;
                         break;
                     case ComDef::Command::TRANSMIT_UID:
                         ret.messageType = RadioDTO::MessageType::UID_CHIRP_COMMAND;
-                        ret.uidChirpCommand.target = cmd->targetId;
+                        ret.targetTID = cmd->targetId;
                         break;
                     case ComDef::Command::SOLID_COLOR:
                         ret.messageType = RadioDTO::MessageType::SOLID_COLOR;
-                        ret.solidColor.target = cmd->targetId;
+                        ret.targetTID = cmd->targetId;
                         ret.solidColor.color = CRGB(cmd->p1, cmd->p2, cmd->p3);
                         break;
                     case ComDef::Command::FLASH:
                         ret.messageType = RadioDTO::MessageType::FLASH_COLOR;
-                        ret.flashColor.target = cmd->targetId;
+                        ret.targetTID = cmd->targetId;
                         ret.flashColor.color = CRGB(cmd->p1, cmd->p2, cmd->p3);
                         ret.flashColor.count = cmd->p4;
                         ret.flashColor.offTime = ((uint16_t)cmd->p5 << 8) | cmd->p6;
@@ -56,7 +58,7 @@ namespace PacketMessageMapper {
                 ret.messageType = RadioDTO::MessageType::TID_ASSIGN;
 
                 ret.tidAssign.TID = tid->TransientID;
-                ret.tidAssign.UID = tid->UID;
+                ret.targetUID = tid->UID;
                 break;
         }
 
@@ -137,6 +139,7 @@ namespace PacketMessageMapper {
                 uid.header.sequence = message.sequenceID;
                 
                 uid.UID = message.uidReport.UID;
+                uid.target = message.uidReport.target;
                 
                 ret.data = reinterpret_cast<uint8_t*>(&uid);
                 size_t len = sizeof(uid);

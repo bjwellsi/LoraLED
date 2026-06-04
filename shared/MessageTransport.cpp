@@ -5,29 +5,69 @@
 #include "MessageTransport.h"
 
 MessageTransport::MessageTransport(){
-    inboundLedgerIndex = 0;
-    outboundLedgerIndex = 0;
     inboundQueue;
+    inboundLedger;
+    outboundLedger;
     currentSequence = 0;
 }
 
 void MessageTransport::tick(){
     radioOps.tick();
-    //TODO
-    //lots going to happen here.
-    //handles ingress primarily
+    //handle ingress
     //what it does is check the radio for messages waiting
-    //if there's one, check 2 things. 
-    //  1. is the target actually us. if not, ignore it
-    //      how to determine this is a bit of a todo. this layer needs some insight into target id ultimately unless you want to propogate all messages up to the parent layer. which would mean a much more bloated inbound ledger/higher likelihood of messages falling off
-    //  2. have we already seen this message. ie check the inbound ledger for matching sequence id
-    //      if we have not, simply add the message to the inbound queue and the inbound ledger. 
-    //      if we have, check the ack status on that message
-    //          if the ack status says the message is still in progress, just ignore the repeat request
-    //          if the ack status says the message is complete, whether error or otherwise, send another ack if the message expects an ack
-    // actually third thing to check. 
-    // if the message is an ack, check the outbound ledger. if the outbound ledger contains the sequence that's being acked, update its ack status to the status of the incoming ack. 
+    if(radioOps.messageWaiting()){
+        RadioDTO::Message nextMessage = radioOps.retrieveMessage();
+        if(!nextMessage.targetId.idMatches(TID, UID)){
+            //is the target actually us. if not, ignore it
+            return;
+        }
+        else if(nextMessage.messageType == RadioDTO::MessageType::ACK){
+            //if the message is an ack, check the outbound ledger. 
+            //if the outbound ledger contains the sequence that's being acked, update its ack status to the status of the incoming ack. 
+            RadioDTO::MessageKey key = nextMessage.ack.getAckingForKey();
 
+            auto it = outboundLedger.find(key);
+
+            if(it != outboundLedger.end()) {
+                RadioDTO::Message& found = it->second;
+
+                found.responseCode = nextMessage.ack.responseCode;
+            }
+            //store the ack in the inbound ledger for good measure, but don't queue it
+            inboundLedger[nextMessage.getMessageKey()] = nextMessage;
+        }
+        else{
+            //check if we have already seen this message
+            RadioDTO::MessageKey key = nextMessage.getMessageKey();
+
+            auto it = inboundLedger.find(key);
+
+            if(it != inboundLedger.end()) {
+                RadioDTO::Message& found = it->second;
+                found.responseCode = nextMessage.ack.responseCode;
+                //check the ack status on the existing message
+                //if the ack status says the message is still in progress, just ignore the repeat request
+                //if the ack status says the message is complete, whether error or otherwise, send another ack if the message expects an ack
+                if(found.expectsAck && (found.responseCode == ComDef::AckResponseCode::SUCCESS || found.responseCode == ComDef::AckResponseCode::ERROR)){
+                    //you should have already sent an ack. find it
+                    if(!(found.sentAck == nullptr)){
+                        radioOps.sendMessage(found.sentAck, 1, 500);
+                    }
+                    else{
+                        //no ack present on a message that was marked done. should not happen. but it did. make a new ack
+                        //technically this is method overwrites the responsecode but I'm overwriting it with itself so sue me
+                        markDone(&found, found.responseCode);
+                    }
+                }
+            }
+            else{
+                //new message, add it to the ledger and queue
+                inboundLedger[key] = nextMessage;
+                inboundQueue.push(&nextMessage);
+            }
+            
+        }
+    }
 }
 
 RadioDTO::Message* MessageTransport::nextMessage(){
@@ -50,8 +90,9 @@ void MessageTransport::markDone(RadioDTO::Message* message, ComDef::AckResponseC
         RadioDTO::Message ack;
         ack.messageType = RadioDTO::MessageType::ACK;
         ack.ack.responseCode = responseCode;
-        ack.ack.sequenceID = message->sequenceID;
-
+        ack.sequenceID = message->sequenceID;
+        
+        message->sentAck = &ack;
         sendMessage(ack, 1, 500);
     }
 }
@@ -63,9 +104,18 @@ RadioDTO::Message* MessageTransport::sendMessage(RadioDTO::Message message, int 
     //this needs to assign the sequenceid and return a reference to the packet in the outbound ledger
     //this returns a reference so that the calling operation can listen for acks if it wants to
     message.sequenceID = currentSequence++;
-    outboundLedger[outboundLedgerIndex] = message;
+    outboundLedger[message.getMessageKey()] = message;
     RadioDTO::Message* outboundMessage = &message;
     radioOps.sendMessage(outboundMessage, resendCount, timeout);
     return outboundMessage;
+}
+
+
+void MessageTransport::assignUID(uint64_t uid){
+    UID = uid;
+}
+
+void MessageTransport::assignTID(uint8_t tid){
+    TID = tid;
 }
 

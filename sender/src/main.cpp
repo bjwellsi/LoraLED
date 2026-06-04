@@ -30,6 +30,7 @@ void assignMissingTIDsCallback(RadioHandler::ResponseCode responseCode);
 String checkCli();
 void processUIDReportPacket(ComDef::UIDReportPacket uidPacket);
 void printTIDs();
+uint64_t getUID();
 
 void setup() {
   Serial.begin(115200);
@@ -40,6 +41,9 @@ void setup() {
   RadioHandler::initRadio();
   activeOp = SenderStateManagement::IDLE;
   currentSequence = 0;
+
+  messageTransport.assignTID(1);
+  messageTransport.assignUID(getUID());
 
   Serial.println("Sender ready");
 }
@@ -229,4 +233,8 @@ void processUIDReportPacket(ComDef::UIDReportPacket uidPacket){
     receivers[receiverCount - 1] = newRec;
   }
   RadioHandler::sendAck(ComDef::SUCCESS, sequence);
+}
+
+uint64_t getUID(){
+  return ESP.getEfuseMac();
 }
