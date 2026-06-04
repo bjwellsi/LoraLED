@@ -13,7 +13,8 @@ namespace RadioDTO {
         STOP_COMMAND,
         TID_ASSIGN,
         UID_REPORT,
-        UID_CHIRP_COMMAND
+        UID_CHIRP_COMMAND,
+        TID_REPORT
     };
 
     struct EmptyPayload{};

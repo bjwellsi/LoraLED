@@ -7,11 +7,18 @@ void RadioMacroOperations::tick(){
     for(int i = 0; i < messages.size(); i++){
         RadioOpContext messageContext = messages[i];
         if(messageContext.message -> responseCode == ComDef::AckResponseCode::SUCCESS 
-            || messageContext.message -> responseCode == ComDef::AckResponseCode::ERROR
-            || messageContext.timeoutEndtime > millis() 
+                || messageContext.message -> responseCode == ComDef::AckResponseCode::ERROR
+                || messageContext.message -> responseCode == ComDef::AckResponseCode::CANCELED
+                || messageContext.message -> responseCode == ComDef::AckResponseCode::TIMEOUT)
+        {
+            messages.erase(messages.begin() + i);
+            i--;
+        }
+        else if(messageContext.timeoutEndtime > millis() 
             || messageContext.maxRetryCount > messageContext.currentRetryCount)
         {
             //remove this context so we stop trying to send this message
+            messageContext.message -> responseCode = ComDef::AckResponseCode::TIMEOUT;
             messages.erase(messages.begin() + i);
             i--;
         }
@@ -23,6 +30,7 @@ void RadioMacroOperations::tick(){
 }
 
 void RadioMacroOperations::cancelMessage(RadioDTO::Message* message){
+    message->responseCode = ComDef::AckResponseCode::CANCELED;
     for(int i = 0; i < messages.size(); i++){
         if(messages[i].message == message){
             messages.erase(messages.begin() + i);

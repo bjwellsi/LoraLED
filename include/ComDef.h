@@ -27,7 +27,9 @@ namespace ComDef{
     NOT_STARTED = 2, 
     IN_PROGRESS = 3,
     SUCCESS = 4,
-    ERROR = 5
+    ERROR = 5,
+    TIMEOUT = 6,
+    CANCELED = 7
   };
 
   enum IDKind : uint8_t {

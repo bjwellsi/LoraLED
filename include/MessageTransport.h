@@ -9,6 +9,7 @@ class MessageTransport{
     public:
         MessageTransport();    
         void tick();
+        bool messageWaiting();
         RadioDTO::Message* nextMessage();
         RadioDTO::Message* sendMessage(RadioDTO::Message message, int resendCount, int timeout);
         void markDone(RadioDTO::Message* message, ComDef::AckResponseCode responseCode);

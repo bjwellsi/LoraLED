@@ -7,12 +7,6 @@
 #include "RadioDTO.h"
 #include "MessageTransport.h"
 
-volatile bool radioReceivedFlag = true;
-SX1262 radio = nullptr;
-RadioHandler::RadioCallbacks radioCallbacks;
-RadioHandler::RadioOpContext radioOpContext;
-RadioHandler::RadioState radioState;
-
 const uint8_t MAX_RECEIVERS = 32;
 uint8_t receiverCount; 
 SenderStateManagement::Receiver receivers[MAX_RECEIVERS];
@@ -21,26 +15,19 @@ SenderStateManagement::ActiveOp activeOp;
 CLIListener cli;
 MessageTransport messageTransport;
 
-uint16_t currentSequence;
-
-void handleCliCommand(String cli);
+uint64_t getUID();
+void handleCliCommand(String line);
+void handleMessage(RadioDTO::Message *incoming);
+void printTIDs();
 void assignMissingTIDs();
 void assignMissingTIDsStateMachine();
-void assignMissingTIDsCallback(RadioHandler::ResponseCode responseCode);
-String checkCli();
-void processUIDReportPacket(ComDef::UIDReportPacket uidPacket);
-void printTIDs();
-uint64_t getUID();
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("Sender booting");
-  radioCallbacks.onUIDReport = processUIDReportPacket;
 
-  RadioHandler::initRadio();
   activeOp = SenderStateManagement::IDLE;
-  currentSequence = 0;
 
   messageTransport.assignTID(1);
   messageTransport.assignUID(getUID());
@@ -59,7 +46,16 @@ void loop() {
 
     handleCliCommand(cliMessage);
   }
-  //check radio
+  if(messageTransport.messageWaiting()){
+    RadioDTO::Message *message = messageTransport.nextMessage();
+
+    Serial.print("Handling message: ");
+    Serial.print(message->sequenceID);
+    Serial.print(" from ");
+    Serial.println(message->senderId.idKind == ComDef::IDKind::TID ? message->senderId.TID : message->senderId.UID);
+    handleMessage(message);
+  }
+  //run active state machine
   switch (activeOp){
     case SenderStateManagement::ASSIGNING_TIDS: 
       assignMissingTIDsStateMachine();
@@ -69,8 +65,6 @@ void loop() {
 
 void handleCliCommand(String line){
   if (line.startsWith("off ")){
-    RadioDTO::Message message;
-    message.stop = {};
 
     int targetId;
 
@@ -82,17 +76,14 @@ void handleCliCommand(String line){
       return;
     }
 
+    RadioDTO::Message message;
+    message.messageType = RadioDTO::MessageType::STOP_COMMAND;
+    message.targetId.idKind = ComDef::IDKind::TID;
+    message.targetId.TID = targetId;
 
-    message.stop.target = targetId;
-
-    messageTransport.sendMessage(message, -1, 1000);
+    messageTransport.sendMessage(message, 1, 1000);
   }
   else if (line.startsWith("solid ")){
-    ComDef::CommandPacket packet;
-
-    packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = RadioHandler::nextSequence(); 
-
     int targetId, r, g, b;
 
     int parsed = sscanf(line.c_str(), "solid %d %d %d %d", &targetId, &r, &g, &b);
@@ -102,20 +93,16 @@ void handleCliCommand(String line){
       return;
     }
 
-    packet.targetId = (uint8_t)targetId;
-    packet.command = ComDef::SOLID_COLOR;
-    packet.p1 = (uint8_t)r;
-    packet.p2 = (uint8_t)g;
-    packet.p3 = (uint8_t)b;
+    RadioDTO::Message message;
+    message.messageType = RadioDTO::MessageType::SOLID_COLOR;
+    message.targetId.idKind = ComDef::IDKind::TID;
+    message.targetId.TID = targetId;
 
-    RadioHandler::sendPacket(packet);
+    message.solidColor.color = ((uint8_t)r, (uint8_t)g, (uint8_t)b);
+
+    messageTransport.sendMessage(message, 1, 1000);
   }
   else if (line.startsWith("flash ")){
-    ComDef::CommandPacket packet;
-
-    packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = RadioHandler::nextSequence(); 
-
     int targetId, r, g, b, count, timeOff, timeOn;
 
     int parsed = sscanf(line.c_str(), "flash %d %d %d %d %d %d %d", &targetId, &r, &g, &b, &count, &timeOff, &timeOn);
@@ -125,29 +112,25 @@ void handleCliCommand(String line){
       return;
     }
 
-    packet.targetId = (uint8_t)targetId;
-    packet.command = ComDef::FLASH;
-    packet.p1 = (uint8_t)r;
-    packet.p2 = (uint8_t)g;
-    packet.p3 = (uint8_t)b;
-    packet.p4 = (uint8_t)count;
-    packet.p5 = (uint8_t)(((uint16_t)timeOff >> 8) & 0xFF);
-    packet.p6 = (uint8_t)(((uint16_t)timeOff) & 0xFF);
-    packet.p7 = (uint8_t)(((uint16_t)timeOn >> 8) & 0xFF);
-    packet.p8 = (uint8_t)(((uint16_t)timeOn) & 0xFF);
+    RadioDTO::Message message;
+    message.messageType = RadioDTO::MessageType::FLASH_COLOR;
+    message.targetId.idKind = ComDef::IDKind::TID;
+    message.targetId.TID = targetId;
 
-    RadioHandler::sendPacket(packet);
+    message.flashColor.color = ((uint8_t)r, (uint8_t)g, (uint8_t)b);
+    message.flashColor.color = (uint8_t)count;
+    message.flashColor.offTime = timeOff;
+    message.flashColor.onTime = timeOn;
+
+    messageTransport.sendMessage(message, 1, 1000);
   }
   else if (line.startsWith("init")){
-    ComDef::CommandPacket packet;
+    RadioDTO::Message message;
+    message.messageType = RadioDTO::MessageType::UID_CHIRP_COMMAND;
+    message.targetId.idKind = ComDef::IDKind::TID;
+    message.targetId.TID = 0;
 
-    packet.header.packetType = ComDef::COMMAND;
-    packet.header.sequence = RadioHandler::nextSequence(); 
-
-    packet.targetId = (uint8_t)0;
-    packet.command = ComDef::TRANSMIT_UID;
-
-    RadioHandler::sendPacket(packet);
+    messageTransport.sendMessage(message, 1, 1000);
   }
   else if (line.startsWith("tidAssign")){
     assignMissingTIDs();
@@ -161,9 +144,46 @@ void handleCliCommand(String line){
   }
 }
 
-void assignMissingTIDs(){
-  activeOp = SenderStateManagement::ASSIGNING_TIDS; 
-  assignMissingTIDsContext.currentReceiverIndex = 0;
+void handleMessage(RadioDTO::Message *incoming){
+  //sender side
+  if(incoming->messageType == RadioDTO::MessageType::UID_REPORT){
+    //check if we already knew about this uid, save it if not
+    if(incoming->senderId.idKind != ComDef::IDKind::UID){
+      //bad, no uid in report
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::ERROR);
+      return;
+    }
+
+    uint64_t incomingUID = incoming->senderId.UID; 
+    for(int i = 0; i < receiverCount; i++){
+      if(receivers[i].UID == incomingUID){
+        //already exists
+        messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+        return;
+      }
+    }
+    //if you got here, rec doesn't exist yet. check that we're not full
+    if(receiverCount < MAX_RECEIVERS){
+      //insert
+      SenderStateManagement::Receiver newRec;
+      newRec.initialized = false;
+      //for now the tid is just the index + 1 (room for sender to be 1)
+      newRec.TransientID = receiverCount + 2;
+      newRec.UID = incomingUID;
+      receivers[receiverCount] = newRec;
+      receiverCount++;
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+    }
+    else {
+      //hit max rec cnt
+      messageTransport.markDone(incoming, ComDef::AckResponseCode::ERROR);
+    }
+  }
+  else{
+    //if you get in a command of any sort, discard it
+    //really all we care about are uid reports right now. just ack the rest if they want an ack
+    messageTransport.markDone(incoming, ComDef::AckResponseCode::SUCCESS);
+  }
 }
 
 void printTIDs(){
@@ -172,67 +192,66 @@ void printTIDs(){
     Serial.println(receivers[i].TransientID);
   }
   Serial.println("Transmitting TID flash command");
-  ComDef::CommandPacket packet;
+    RadioDTO::Message message;
+    message.messageType = RadioDTO::MessageType::TID_REPORT;
+    message.targetId.idKind = ComDef::IDKind::TID;
+    message.targetId.TID = 0;
 
-  packet.header.packetType = ComDef::COMMAND;
-  packet.header.sequence = RadioHandler::nextSequence(); 
-
-  packet.targetId = (uint8_t)0;
-  packet.command = ComDef::FLASH_TID;
-
-  RadioHandler::sendPacket(packet);
+    messageTransport.sendMessage(message, 1, 1000);
 }
 
-void assignMissingTIDsCallback(RadioHandler::ResponseCode responseCode){
-  assignMissingTIDsContext.awaitingAck = false;
-  if(responseCode == RadioHandler::ACK_RECEIVED){
-    receivers[assignMissingTIDsContext.currentReceiverIndex].initialized = true;
-  }
+void assignMissingTIDs(){
+  activeOp = SenderStateManagement::ASSIGNING_TIDS; 
+  assignMissingTIDsContext.currentReceiverIndex = 0;
 }
 
 void assignMissingTIDsStateMachine(){
-  if(assignMissingTIDsContext.awaitingAck == false){
-    for(int i = assignMissingTIDsContext.currentReceiverIndex; i < receiverCount; i++){
-      SenderStateManagement::Receiver& receiver = receivers[receiverCount];
-      if(receiver.UID > 0 && receiver.initialized == false){
-        assignMissingTIDsContext.currentReceiverIndex = i;
-        assignMissingTIDsContext.awaitingAck = true;
-        
-        ComDef::TIDAssignmentPacket assignmentPacket;
-        assignmentPacket.header.packetType = ComDef::TID_ASSIGN;
-        assignmentPacket.header.sequence = RadioHandler::nextSequence(); 
-        assignmentPacket.UID = receiver.UID;
-        assignmentPacket.TransientID = (uint8_t)(i + 1);
-        
-        RadioHandler::sendTillAck(assignmentPacket, -1, 10000, assignMissingTIDsCallback);
-      }
+  if(assignMissingTIDsContext.currentReceiverTimeoutEndTime > millis()){
+    assignMissingTIDsContext.awaitingAck == nullptr;
+    assignMissingTIDsContext.currentReceiverIndex++;
     return;
+  }
+  else if(assignMissingTIDsContext.awaitingAck == nullptr){
+    for(int i = assignMissingTIDsContext.currentReceiverIndex; i < receiverCount; i++){
+      //get the next rec
+      if(!receivers[i].initialized){
+        SenderStateManagement::Receiver nextRec = receivers[i];
+        RadioDTO::Message assignment;
+        assignment.tidAssign.newTID = nextRec.TransientID;
+        assignment.targetId.idKind = ComDef::IDKind::UID;
+        assignment.targetId.UID = nextRec.UID;
+
+        assignment.expectsAck = true;
+
+        RadioDTO::Message *sent = messageTransport.sendMessage(assignment, -1, assignMissingTIDsContext.maxRecWait);
+
+        assignMissingTIDsContext.awaitingAck = sent;
+        assignMissingTIDsContext.currentReceiverTimeoutEndTime = millis() + assignMissingTIDsContext.maxRecWait;
+        
+        return;
+      }
     }
     //if you make it out of the for loop, all recs are initialized
     assignMissingTIDsContext.reset();
     activeOp = SenderStateManagement::IDLE;
   }
-}
-
-void processUIDReportPacket(ComDef::UIDReportPacket uidPacket){
-  uint16_t sequence = uidPacket.header.sequence;
-  int indexOfRec = -1;
-  for(int i = 0; i < receiverCount; i++){
-    if(receivers[i].UID == uidPacket.UID){
-      indexOfRec = i;
-      break;
+  else{
+    //check if the message has acked
+    RadioDTO::Message *current = assignMissingTIDsContext.awaitingAck;
+    if(current->responseCode == ComDef::AckResponseCode::SUCCESS){
+      receivers[assignMissingTIDsContext.currentReceiverIndex].initialized = true;
+      assignMissingTIDsContext.awaitingAck == nullptr;
+      assignMissingTIDsContext.currentReceiverIndex++;
     }
+    else if(current->responseCode == ComDef::AckResponseCode::ERROR
+      || current->responseCode == ComDef::AckResponseCode::CANCELED
+      || current->responseCode == ComDef::AckResponseCode::TIMEOUT)
+    {
+      assignMissingTIDsContext.awaitingAck == nullptr;
+      assignMissingTIDsContext.currentReceiverIndex++;
+    }
+    //otherwise keep waiting on this ack
   }
-  if(indexOfRec < 0){
-    receiverCount++;
-    SenderStateManagement::Receiver newRec;
-    newRec.TransientID = receiverCount;
-    newRec.UID = uidPacket.UID;
-    newRec.initialized = false;
-   
-    receivers[receiverCount - 1] = newRec;
-  }
-  RadioHandler::sendAck(ComDef::SUCCESS, sequence);
 }
 
 uint64_t getUID(){

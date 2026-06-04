@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ComDef.h"
+#include "RadioDTO.h"
 
 namespace SenderStateManagement{
   enum ActiveOp {
@@ -16,7 +17,7 @@ namespace SenderStateManagement{
 
   struct AssignMissingTIDsContext{
     int currentReceiverIndex = 0;
-    bool awaitingAck = false;
+    RadioDTO::Message *awaitingAck = nullptr;
     
     void reset(){
       *this = AssignMissingTIDsContext{};
