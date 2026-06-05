@@ -37,12 +37,21 @@ namespace ComDef{
     UID = 0
   };
 
+  struct __attribute__((packet)) PacketHeaderPrefix {
+    uint8_t senderIdKind = 0;
+    uint8_t receiverIdKind = 0;
+    uint16_t sequence = 0;
+
+    void reset(){
+      *this = PacketHeaderPrefix{};
+    }
+  };
+
   template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) PacketHeader {
+    PacketHeaderPrefix prefix;
     uint8_t packetType = INVALID;
-    uint16_t sequence = 0;
     uint8_t expectsAck = 0;
-    uint8_t idKind = 0;
     SenderIdT senderId;
     ReceiverIdT receiverId;
 
@@ -55,6 +64,10 @@ namespace ComDef{
   struct __attribute__((packed)) Ack {
     PacketHeader<SenderIdT, ReceiverIdT> header;
     uint8_t status = 0;
+    AckResponseCode responseCode = AckResponseCode::INVALID;
+    uint16_t ackingForSequence = 0;
+    uint8_t ackingForTID = 0;
+    uint64_t ackingForUID = 0;
 
     void reset(){
       *this = Ack{};
@@ -64,8 +77,6 @@ namespace ComDef{
   template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) UIDReportPacket {
     PacketHeader<SenderIdT, ReceiverIdT> header;
-    uint8_t target = 0;
-    uint64_t UID = 0;
 
     void reset(){
       *this = UIDReportPacket{};
@@ -75,8 +86,7 @@ namespace ComDef{
   template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) TIDAssignmentPacket {
     PacketHeader<SenderIdT, ReceiverIdT> header;
-    uint64_t UID = 0;
-    uint8_t TransientID = 0;
+    uint8_t newTID = 0;
 
     void reset(){
       *this = TIDAssignmentPacket{};
@@ -86,7 +96,6 @@ namespace ComDef{
   template <typename SenderIdT, typename ReceiverIdT>
   struct __attribute__((packed)) CommandPacket {
     PacketHeader<SenderIdT, ReceiverIdT> header;
-    uint8_t targetId = 0;
     uint8_t command = 0;
     uint8_t p1 = 0;
     uint8_t p2 = 0;
@@ -107,7 +116,6 @@ namespace ComDef{
       *this = CommandPacket{};
     }
   };
-
 
   struct PacketBytes{
     uint8_t* data; 
